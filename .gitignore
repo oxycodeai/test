@@ -1,0 +1,18 @@
+# Secrets & env
+.env
+
+# Dependencies
+node_modules/
+
+# Data (SQLite, sessions, captchas, logs, builds)
+data/
+sessions/
+logs/
+src/web/dist/
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db
+coverage/
+.tmp-test/

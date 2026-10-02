@@ -1,0 +1,43 @@
+{
+  "name": "kartbulk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-account Flipkart hub — affiliate fetch, per-account scan, hybrid bulk orders",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "workspaces": [
+    "src/web"
+  ],
+  "scripts": {
+    "start": "node scripts/start.js",
+    "start:termux": "node scripts/start.js",
+    "start:pc": "node scripts/start.js",
+    "dev": "node scripts/dev.js",
+    "server": "node src/server/index.js",
+    "web": "npm run dev -w src/web",
+    "web:build": "npm run build -w src/web",
+    "db:migrate": "node src/db/migrate.js",
+    "db:backup": "node src/db/backup.js",
+    "smoke": "node scripts/smoke.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --test \"tests/*.test.js\""
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "playwright": "^1.49.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2"
+  },
+  "allowScripts": {}
+}

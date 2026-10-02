@@ -1,0 +1,39 @@
+/* KartBulk design tokens — docs/UI-UX.md §1 */
+:root {
+  --bg: #ffffff;
+  --bg-alt: #f1f3f6;
+  --surface: #ffffff;
+  --border: #e0e0e0;
+
+  --primary: #2874f0;
+  --primary-dark: #1a5fd0;
+  --primary-soft: #e8f0fe;
+  --accent: #ffe11b;
+  --accent-hover: #f5d400;
+  --accent-text: #1a1a1a;
+
+  --text: #212121;
+  --text-muted: #878787;
+  --text-inverse: #ffffff;
+
+  --success: #388e3c;
+  --success-soft: #e8f5e9;
+  --danger: #ff6161;
+  --danger-soft: #fff1f1;
+  --warning: #ff9f00;
+  --warning-soft: #fff7e6;
+
+  --font: Inter, Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-pill: 999px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+
+  --header-h: 56px;
+  --bottomnav-h: 60px;
+  --sidebar-w: 240px;
+
+  --bp-md: 768px;
+  --bp-lg: 1024px;
+}
