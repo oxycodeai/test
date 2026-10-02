@@ -49,7 +49,9 @@ function extractInPage() {
       const t = (el.textContent || '').trim();
       if (!/^₹\s?[\d,]+$/.test(t)) return false;
       const st = getComputedStyle(el);
-      return st.textDecorationLine.includes('line-through') || st.textDecoration.includes('line-through');
+      return (
+        st.textDecorationLine.includes('line-through') || st.textDecoration.includes('line-through')
+      );
     });
     out.strikeMrp = strikes[0]?.textContent?.trim() || null;
     // biggest ₹ number with large font = final price
@@ -69,7 +71,9 @@ function extractInPage() {
   try {
     const seen = new Set();
     const KEY = /(\boff\b|cashback|coupon|bank|exchange|no cost emi|buy \d|save ₹|extra ₹)/i;
-    for (const el of document.querySelectorAll('li, .offer, [class*="offer"] span, [class*="Offer"] li')) {
+    for (const el of document.querySelectorAll(
+      'li, .offer, [class*="offer"] span, [class*="Offer"] li'
+    )) {
       const t = (el.innerText || '').trim().replace(/\s+/g, ' ');
       if (!t || t.length > 140 || !KEY.test(t) || seen.has(t)) continue;
       if (!/₹|\d+%|\d+\b/.test(t)) continue;
@@ -199,10 +203,25 @@ export function normalize(raw) {
 }
 
 // Flipkart load-shed / interstitial page (rate-limit) — isko product samajhna nahi
-const BLOCKED_RE = /looks like all of india|hang in there, the offers|retry in \d+|access denied|request blocked/i;
+const BLOCKED_RE =
+  /looks like all of india|hang in there, the offers|retry in \d+|access denied|request blocked/i;
 
 function looksBlocked(text) {
   return BLOCKED_RE.test(String(text || '').slice(0, 50000));
+}
+
+// Throttle pe Flipkart homepage (ya error shell) serve karta hai — status 500/200
+// dono, URL bhi /p/ hi rehta hai. Title se pakadte hain.
+const HOMEPAGE_RE = /Online Shopping India Mobile, Cameras, Lifestyle/i;
+const isProductUrl = (u) => /\/p\//.test(String(u || ''));
+
+// Junk = blocked/interstitial/homepage/empty — real product page nahi
+function isJunkPage(raw, finalUrl) {
+  if (!raw) return true;
+  if (looksBlocked(raw.bodyText)) return true;
+  if (HOMEPAGE_RE.test(raw.title || '')) return true;
+  if (!isProductUrl(finalUrl)) return true;
+  return !raw.title && !raw.next;
 }
 
 // ── public API ──────────────────────────────────────────────
@@ -216,9 +235,11 @@ export async function fetchProductPage(url) {
     });
     if (res.ok) {
       const html = await res.text();
-      if (!looksBlocked(html)) {
+      if (!looksBlocked(html) && isProductUrl(res.url)) {
         const data = extractFromHtml(html, url);
-        if (data.price && data.title) return { ...data, method: 'fetch' };
+        if (data.price && data.title && !HOMEPAGE_RE.test(data.title)) {
+          return { ...data, method: 'fetch' };
+        }
       }
     }
   } catch {
@@ -235,7 +256,7 @@ export async function fetchProductPage(url) {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(1500); // SSR JSON settle
       raw = (await page.evaluate(extractInPage)) || null;
-      if (!raw || looksBlocked(raw.bodyText) || (!raw.title && !raw.next)) {
+      if (isJunkPage(raw, page.url())) {
         if (attempt < 3) {
           await page.waitForTimeout(3000 * attempt); // backoff
           continue;

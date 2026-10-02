@@ -63,11 +63,9 @@ r.post(
     const id = String(identifier).trim();
     const exists = db.prepare('SELECT id FROM accounts WHERE identifier = ?').get(id);
     if (exists) {
-      return res
-        .status(409)
-        .json({
-          error: { code: 'duplicate', message: 'Account already exists', accountId: exists.id },
-        });
+      return res.status(409).json({
+        error: { code: 'duplicate', message: 'Account already exists', accountId: exists.id },
+      });
     }
     const t = now();
     const info = db

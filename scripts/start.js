@@ -53,7 +53,10 @@ function findCloudflared() {
     const out = execFileSync(process.platform === 'win32' ? 'where' : 'which', ['cloudflared'], {
       encoding: 'utf8',
     });
-    const first = out.split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+    const first = out
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find(Boolean);
     if (first) return first;
   } catch {
     /* PATH me nahi — fallbacks try karo */

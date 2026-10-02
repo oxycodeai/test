@@ -7,18 +7,17 @@ import { getDb } from '../../db/index.js';
 const r = Router();
 const started = Date.now();
 
-r.get(
-  '/health',
-  h(async (req, res) => {
-    res.json({
-      ok: true,
-      platform: platformName(),
-      version: process.env.npm_package_version || '0.1.0',
-      uptimeSec: Math.round((Date.now() - started) / 1000),
-      browser: browserInfo(),
-    });
-  })
-);
+export const healthHandler = h(async (req, res) => {
+  res.json({
+    ok: true,
+    platform: platformName(),
+    version: process.env.npm_package_version || '0.1.0',
+    uptimeSec: Math.round((Date.now() - started) / 1000),
+    browser: browserInfo(),
+  });
+});
+
+r.get('/health', healthHandler);
 
 r.get(
   '/stats',

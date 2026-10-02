@@ -5,7 +5,7 @@ import { paths } from '../shared/constants.js';
 import { requireAuth } from './middleware/auth.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import authRoutes from './routes/auth.js';
-import systemRoutes from './routes/system.js';
+import systemRoutes, { healthHandler } from './routes/system.js';
 import streamRoutes from './routes/stream.js';
 import accountRoutes from './routes/accounts.js';
 import productRoutes from './routes/products.js';
@@ -16,8 +16,9 @@ export function createApp() {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
 
-  // public: auth bootstrap + health
+  // public: auth bootstrap + health (Railway healthcheck / Settings link)
   app.use('/api/auth', authRoutes);
+  app.get('/api/health', healthHandler);
   app.get('/api/ping', (req, res) => res.json({ ok: true }));
 
   // protected

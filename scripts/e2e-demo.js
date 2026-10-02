@@ -23,7 +23,10 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
 try {
   // 1) first-run PIN setup
   await page.goto(BASE, { waitUntil: 'networkidle' });
-  const isSetup = await page.getByText('Set your PIN').isVisible().catch(() => false);
+  const isSetup = await page
+    .getByText('Set your PIN')
+    .isVisible()
+    .catch(() => false);
   if (isSetup) {
     await page.fill('#pin', '4747');
     await page.fill('#pin2', '4747');
@@ -60,11 +63,45 @@ try {
   await page.goto(`${BASE}/fetch`, { waitUntil: 'networkidle' });
   await page.fill('#url', productUrl);
   await page.click('button[type="submit"]');
-  await page.waitForSelector('.product-card', { timeout: 60000 });
-  const title = await page.locator('.product-card .title').innerText();
-  const price = await page.locator('.product-card .price').innerText();
-  console.log(`✔ REAL product fetched: ${title.slice(0, 60)} | ${price}`);
-  await shot(page, 'fetch-real-product');
+
+  // product card OR clear error (blocked) — dono ka wait race
+  const outcome = await Promise.race([
+    page
+      .waitForSelector('.product-card', { timeout: 90000 })
+      .then(() => 'ok')
+      .catch(() => 'timeout'),
+    page
+      .waitForSelector('.error-text', { timeout: 90000 })
+      .then(() => 'err')
+      .catch(() => 'timeout'),
+  ]);
+
+  if (outcome !== 'ok') {
+    const msg = (await page.locator('.error-text').first().innerText().catch(() => '')) || outcome;
+    const blocked = /blocked|throttl|429/i.test(msg);
+    if (blocked && process.env.E2E_ALLOW_BLOCK === '1') {
+      console.log(`⚠ fetch BLOCKED (IP throttle) — allowed by E2E_ALLOW_BLOCK=1: ${msg}`);
+    } else {
+      throw new Error(
+        blocked
+          ? `fetch blocked by Flipkart (IP throttle) — cooldown pending, ya E2E_ALLOW_BLOCK=1 lagao: ${msg}`
+          : `fetch failed: ${msg}`
+      );
+    }
+  } else {
+    const title = await page.locator('.product-card .title').innerText();
+    const price = await page.locator('.product-card .price').innerText();
+    // sanity: homepage-title/₹2 jaisa garbage PASS nahi hona chahiye
+    if (/Online Shopping India Mobile, Cameras/i.test(title)) {
+      throw new Error(`garbage fetch — homepage title mila: "${title}"`);
+    }
+    const num = parseInt(String(price).replace(/[^\d]/g, ''), 10);
+    if (!Number.isFinite(num) || num < 10) {
+      throw new Error(`garbage fetch — suspicious price: "${price}"`);
+    }
+    console.log(`✔ REAL product fetched: ${title.slice(0, 60)} | ${price}`);
+    await shot(page, 'fetch-real-product');
+  }
 
   // 4) scan page — qty guard
   await page.goto(`${BASE}/scan`, { waitUntil: 'networkidle' });

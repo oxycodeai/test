@@ -34,11 +34,9 @@ r.post(
   h(async (req, res) => {
     const { url } = req.body || {};
     if (!url || !isFlipkartUrl(url)) {
-      return res
-        .status(400)
-        .json({
-          error: { code: 'invalid_url', message: 'Valid flipkart.com product URL required' },
-        });
+      return res.status(400).json({
+        error: { code: 'invalid_url', message: 'Valid flipkart.com product URL required' },
+      });
     }
     const db = getDb();
 
