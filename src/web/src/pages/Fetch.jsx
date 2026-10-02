@@ -47,19 +47,19 @@ export default function FetchPage() {
     <div>
       <div className="page-head">
         <h1>Fetch Product</h1>
-        <p>Flipkart link paste karo — real price, offers, COD status milega.</p>
+        <p>Flipkart / CashKaro / EarnKaro link paste karo — real price, offers, COD status milega.</p>
       </div>
 
       <form className="card" onSubmit={fetchNow}>
         <div className="field">
-          <label htmlFor="url">Flipkart product URL</label>
+          <label htmlFor="url">Product URL (Flipkart ya CashKaro/EarnKaro affiliate link)</label>
           <div className="row" style={{ gap: 8 }}>
             <input
               id="url"
               className="input"
               type="url"
               inputMode="url"
-              placeholder="https://www.flipkart.com/.../p/..."
+              placeholder="flipkart.com/.../p/... ya cashkaro.com/... ya earnkaro.com/..."
               value={url}
               onChange={(e) => setUrl(e.target.value)}
             />
@@ -81,6 +81,7 @@ export default function FetchPage() {
               {product.method ? ` · via ${product.method}` : ''}
             </span>
             <span className="row" style={{ gap: 6 }}>
+              <Pill status="ok">{product.platform || 'flipkart'}</Pill>
               <Pill status={product.in_stock ? 'active' : 'expired'}>
                 {product.in_stock ? 'In stock' : 'Out of stock'}
               </Pill>
@@ -117,9 +118,11 @@ export default function FetchPage() {
             </Button>
             {product.affiliate && (
               <span className="small muted">
-                {product.affiliate.converted
-                  ? `via Cuelinks ✔`
-                  : `mode: ${product.affiliate.mode}${product.affiliate.note ? ` (${product.affiliate.note})` : ''}`}
+                {product.affiliate.native
+                  ? `${product.affiliate.mode} link ✔ (wahi affiliate link use hoga)`
+                  : product.affiliate.converted
+                    ? `via Cuelinks ✔`
+                    : `mode: ${product.affiliate.mode}${product.affiliate.note ? ` (${product.affiliate.note})` : ''}`}
               </span>
             )}
           </div>

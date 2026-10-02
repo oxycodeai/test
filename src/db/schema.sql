@@ -2,18 +2,27 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS sections (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  created_at    INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   label         TEXT,
   identifier    TEXT NOT NULL,
   status        TEXT NOT NULL DEFAULT 'pending'
                 CHECK (status IN ('pending','active','expired','error')),
+  section_id    INTEGER REFERENCES sections(id) ON DELETE SET NULL,
+  booked_until  INTEGER,
   last_checked  INTEGER,
   last_error    TEXT,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_identifier ON accounts(identifier);
+CREATE INDEX IF NOT EXISTS idx_accounts_section ON accounts(section_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
   account_id    INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
@@ -26,6 +35,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS products (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   url           TEXT NOT NULL,
+  platform      TEXT NOT NULL DEFAULT 'flipkart',
+  affiliate_url TEXT,
   pid           TEXT,
   title         TEXT,
   image         TEXT,
@@ -70,11 +81,47 @@ CREATE TABLE IF NOT EXISTS scan_results (
   UNIQUE (job_id, account_id)
 );
 
+CREATE TABLE IF NOT EXISTS addresses (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  phone         TEXT NOT NULL,
+  pincode       TEXT NOT NULL,
+  line1         TEXT NOT NULL,
+  line2         TEXT,
+  city          TEXT NOT NULL,
+  state         TEXT,
+  is_default    INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bookings (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id    INTEGER REFERENCES products(id),
+  platform      TEXT,
+  affiliate_url TEXT,
+  section_id    INTEGER REFERENCES sections(id),
+  address_id    INTEGER REFERENCES addresses(id),
+  qty           INTEGER NOT NULL,
+  qty_mode      TEXT NOT NULL DEFAULT 'total'
+                CHECK (qty_mode IN ('total','per_account')),
+  per_acc_qty   INTEGER DEFAULT 1,
+  status        TEXT NOT NULL DEFAULT 'quoting'
+                CHECK (status IN ('quoting','quoted','running','done','failed','cancelled')),
+  progress      INTEGER NOT NULL DEFAULT 0,
+  total         INTEGER NOT NULL DEFAULT 0,
+  total_amount  INTEGER,
+  error         TEXT,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS orders (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id    INTEGER REFERENCES bookings(id),
   job_id        INTEGER REFERENCES scan_jobs(id),
   account_id    INTEGER REFERENCES accounts(id),
   product_id    INTEGER REFERENCES products(id),
+  address_id    INTEGER REFERENCES addresses(id),
   qty           INTEGER NOT NULL DEFAULT 1,
   price         INTEGER,
   captcha_state TEXT NOT NULL DEFAULT 'auto'
@@ -85,6 +132,7 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_orders_booking ON orders(booking_id);
 
 CREATE TABLE IF NOT EXISTS commission_events (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,60 +1,53 @@
-# Phase 4 — Orders (Hybrid) + Commission Dashboard
+# Phase 4 — Booking Engine (Quote → Total → Book) + Orders + Commission
 
-**Goal:** Allocation → auto checkout (COD) → CAPTCHA auto/manual → real order + commission tracking.
-**Depends on:** Phase 3 DoD approved.
-**Status:** ⬜ Not Started
+**Goal:** Section se allocate → har account ka **real personalized price quote** → **TOTAL** dekh ke Book → COD-only checkout → green "Booked" status.
+**Depends on:** Phase 3 Complete.
+**Status:** 🟡 In Progress (2026-10-02) — engine + UI built, real-order DoD pending Flipkart IP cooldown.
 
 ## Tasks
 
-### 4.1 Allocation (F7 + F11 guard)
+### 4.1 Bookings (schema + quote/confirm API)
 
-- [ ] `POST /api/orders/allocate` — scan_results (eligible only) → split qty:
-  - `total` mode: cheapest-first ya round-robin (setting) → `[{account_id, qty}]`
-  - `per_account` mode: har eligible acc pe `per_acc_qty`
-- [ ] Allocation preview UI — dry table before run (account × qty × price, total ₹)
-- [ ] Guards: qty insufficient → blocked with reason; amount cap (`order_amount_cap`)
+- [x] `bookings` table (status quoting/quoted/running/done/failed/cancelled, qty_mode total|per_account, total_amount) + `orders` += booking_id/address_id/price
+- [x] `POST /api/bookings` — allocate free **active** accounts (section-wise, `booked_until` expired/null only) → orders rows → enqueue `price_check` per order
+  - total mode: `eligible < qty` → **409 `{available, needed}`**
+  - per_account mode: har eligible × per_acc_qty
+- [x] `GET /api/bookings` + `GET /api/bookings/:id` (orders + account masked)
+- [x] `POST /:id/confirm` — sirf `quoted` state (else 409) → `running` + order jobs
+- [x] `POST /:id/cancel` — queued jobs fail + status cancelled
+- [x] `bookingStore.refreshBooking` — quoting: price/error done → `quoted` (≥1 price) / `failed`; running: placed/failed → `done`/`failed` + SSE `booking_status`
 
-### 4.2 Checkout Runner (F10 — Hybrid)
+### 4.2 Worker — price_check + order (checkout)
 
-- [ ] Worker `order` job per allocation — flow INTEGRATIONS B4: Buy Now → address (default saved) → COD → captcha → Place Order
-- [ ] **Pre-flight:** live price vs scan price ±5% → else `failed:'price_changed'`
-- [ ] **CAPTCHA auto path:** screenshot → `tesseract.js` OCR (2 tries) → fill → submit
-  - accept → order_ref (success page) → `placed` + SSE toast
-  - reject → `captcha_png` save → `pending` + SSE → queue
-- [ ] Failure taxonomy: `no_address` / `cod_unavailable` / `price_changed` / `blocked` / `captcha_failed` — clear error text
-- [ ] `CHECKOUT_DRY_RUN=true` — all steps but no Place Order click (dev testing)
-- [ ] Address pre-check before batch run (setup hint if none)
+- [x] `price_check` — session load → `fetchProductWithSession` (account ka real price) → orders.price; no session → honest fail; refreshBooking
+- [x] `order` — flow: product page (block check) → **price pre-flight ±5%** → amount cap (`order_amount_cap` 49000) → Buy Now → address (hamara match name+phone+pincode, warna add-address form fill; **purane addresses nahi**) → **COD only** → captcha (OCR skip → pending + SSE) → Place Order
+- [x] Manual captcha: `POST /api/orders/:id/captcha {text}` → memory consume-once → flow replay with text
+- [x] Success → `order_ref` + `accounts.booked_until = now + booked_days*86400` (setting, default 3 din) + SSE `order_placed`
+- [x] `CHECKOUT_DRY_RUN=true` → saare steps, Place Order click nahi (`DRY-RUN` ref)
+- [x] `POST /api/orders/:id/retry` (failed, price required)
+- [x] `POST /api/accounts/:id/release` — green flag manual hatao
 
-### 4.3 Orders UI (F10)
+### 4.3 Orders + Booking UI
 
-- [ ] `/orders` tabs: **Pending CAPTCHA** (hero) | Placed | Failed
-- [ ] Pending card: captcha image (clean), text input, yellow **Place Order**, Enter submit; bulk "Retry auto-solve"
-- [ ] Placed list: account, product, qty, price, order ref (copy), time
-- [ ] Failed list: reason chip + **Retry**
-- [ ] Dashboard: today's orders count live
+- [x] `/booking` wizard (Scan ki jagah; `/scan` → redirect) — 1 Product → 2 Section+qty mode → 3 Address → 4 **Quote table** (Account | Qty | Real price | Status) + **TOTAL row** + Book button + live SSE refresh
+- [x] `/orders` — tabs Pending CAPTCHA (hero) | Placed | Failed | All; captcha modal (image + input + Enter); Failed → Retry
+- [x] Accounts — green **Booked Nd** pill (expiry days) + Release button + `status=booked` filter
+- [x] Nav: "Scan" → "Book"
 
-### 4.4 Commission (F11)
+### 4.4 Commission (pending)
 
-- [ ] `src/server/integrations/cuelinks.js` — `transactions` + `reports/summary` sync (INTEGRATIONS A4); status map + upsert `commission_events`
-- [ ] `POST /api/commission/sync` + auto every 6h (setting)
-- [ ] `GET /api/commission?period=today|7d|month` → totals + items
-- [ ] `/commission` UI — 3 stat cards (yellow accent on Total), period toggle, table with status pills, Sync button (`Synced n new`)
+- [ ] Cuelinks `transactions` sync + auto 6h + `/commission` UI (Phase ke baad ya saath me)
 
-### 4.5 Notifications
+## DoD
 
-- [ ] SSE events: `order_placed`, `order_failed`, `captcha_pending`, `commission_synced` → toasts
-- [ ] Dashboard recent activity feed
-
-## DoD (Definition of Done)
-
-- [ ] Scan 10 acc (5 COD) → qty 5 total mode → allocation preview: 5 accounts × 1 (cheapest first), non-COD excluded
-- [ ] `CHECKOUT_DRY_RUN=true` → full flow runs, no order placed, steps logged
-- [ ] Real order (user consent, small amount): auto path ya pending queue se place → **order_ref** saved, toast
-- [ ] CAPTCHA pending flow: image dikh, type karo, Enter → placed
-- [ ] Failure cases show correct reason (no_address etc.)
-- [ ] Commission: Sync → real Cuelinks numbers dashboard pe (ya manual mode ka clean empty state)
-- [ ] Amount cap + price-change guard verified
-- [ ] Lint/test green; demo end-to-end
+- [x] Quote flow: allocate → per-account price jobs → failed/quoted transition honest
+- [x] Guards: insufficient 409, confirm-before-quote 409, captcha wrong-state 409, cancel invalid-state 409
+- [x] Import + sections + addresses live-verified via API (smoke)
+- [x] Lint clean · 20/20 tests · web build
+- [ ] `CHECKOUT_DRY_RUN=true` full flow (Flipkart IP block ke baad — session wale account chahiye)
+- [ ] Real order (user consent, small amount, COD) → order_ref + booked green pill
+- [ ] CAPTCHA pending → manual solve → placed
+- [ ] Commission sync (Cuelinks real numbers)
 
 ## Exit
 

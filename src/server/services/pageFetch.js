@@ -282,4 +282,109 @@ export function isFlipkartUrl(u) {
   }
 }
 
+// ── affiliate platform detect + redirect resolver (CashKaro/EarnKaro) ──
+export function detectPlatform(u) {
+  try {
+    const h = new URL(u).hostname.toLowerCase();
+    if (/(^|\.)flipkart\.com$/.test(h)) return 'flipkart';
+    if (/(^|\.)(cashkaro\.com|cashkaro\.in|ckr\.me)$/.test(h)) return 'cashkaro';
+    if (/(^|\.)(earnkaro\.com|earnkaro\.in)$/.test(h)) return 'earnkaro';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function isSupportedAffiliateUrl(u) {
+  return detectPlatform(u) !== null;
+}
+
+/**
+ * CashKaro/EarnKaro hop link → final Flipkart product URL.
+ * HTTP redirect chain follow → zarurat pade to Playwright (JS redirect).
+ * Returns { platform, affiliateUrl, url } — flipkart pe affiliateUrl=null.
+ */
+export async function resolveAffiliateUrl(u) {
+  const platform = detectPlatform(u);
+  if (!platform) throw Object.assign(new Error('Unsupported link platform'), { status: 400 });
+  if (platform === 'flipkart') return { platform, affiliateUrl: null, url: u };
+
+  let cur = u;
+  for (let hop = 0; hop < 10; hop++) {
+    let res;
+    try {
+      res = await fetch(cur, {
+        method: 'GET',
+        redirect: 'manual',
+        headers: { 'user-agent': UA, 'accept-language': 'en-IN,en;q=0.9' },
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch {
+      break;
+    }
+    const loc = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && loc) {
+      cur = new URL(loc, cur).toString();
+      if (isProductUrl(cur)) break;
+      continue;
+    }
+    break; // 200 / no location — meta/JS redirect ho sakta hai
+  }
+
+  if (!isProductUrl(cur)) {
+    // JS/meta redirect → browser fallback
+    try {
+      const browser = await getBrowser();
+      const ctx = await browser.newContext({ userAgent: UA, locale: 'en-IN' });
+      const page = await ctx.newPage();
+      await page.goto(u, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(2500);
+      cur = page.url();
+      await ctx.close().catch(() => {});
+    } catch {
+      /* jo mila wo rakho */
+    }
+  }
+
+  if (!isProductUrl(cur) || !isFlipkartUrl(cur)) {
+    const e = new Error(
+      'Link Flipkart product tak redirect nahi hua — wahi link paste karo jo CashKaro/EarnKaro ne diya (login ke baad wali)'
+    );
+    e.status = 422;
+    throw e;
+  }
+  return { platform, affiliateUrl: u, url: cur };
+}
+
+/**
+ * Session ke saath product page → real personalized price (quote step).
+ * Har account ka price alag ho sakta hai (Flipkart logged-in pricing).
+ */
+export async function fetchProductWithSession(storageState, url) {
+  const browser = await getBrowser();
+  const ctx = await browser.newContext({ storageState, userAgent: UA, locale: 'en-IN' });
+  const page = await ctx.newPage();
+  try {
+    let raw = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(1500);
+      raw = (await page.evaluate(extractInPage)) || null;
+      if (isJunkPage(raw, page.url())) {
+        if (attempt < 3) {
+          await page.waitForTimeout(3000 * attempt);
+          continue;
+        }
+        const e = new Error('Flipkart blocked/throttled this request — try again after a minute');
+        e.status = 429;
+        throw e;
+      }
+      break;
+    }
+    return normalize(raw);
+  } finally {
+    await ctx.close().catch(() => {});
+  }
+}
+
 export const fetchTimeoutMs = config.nodeEnv === 'development' ? 45000 : 35000;

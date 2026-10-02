@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { h } from '../middleware/error.js';
 import { getDb } from '../../db/index.js';
 import { now } from '../../shared/constants.js';
-import { fetchProductPage, isFlipkartUrl } from '../services/pageFetch.js';
+import { fetchProductPage, isSupportedAffiliateUrl, resolveAffiliateUrl } from '../services/pageFetch.js';
 import { convertLink, isConfigured } from '../integrations/cuelinks.js';
 import { sendEvent } from './stream.js';
 
@@ -33,26 +33,36 @@ r.post(
   '/fetch',
   h(async (req, res) => {
     const { url } = req.body || {};
-    if (!url || !isFlipkartUrl(url)) {
+    if (!url || !isSupportedAffiliateUrl(url)) {
       return res.status(400).json({
-        error: { code: 'invalid_url', message: 'Valid flipkart.com product URL required' },
+        error: {
+          code: 'invalid_url',
+          message: 'Valid Flipkart / CashKaro / EarnKaro product link required',
+        },
       });
     }
     const db = getDb();
 
-    // cache: same URL, <15 min → return fresh
+    // CashKaro/EarnKaro hop → final Flipkart product URL (flipkart pe no-op)
+    const resolved = await resolveAffiliateUrl(url);
+    const canonical = resolved.url;
+
+    // cache: same canonical URL, <15 min → return fresh
     const cached = db
       .prepare('SELECT * FROM products WHERE url = ? ORDER BY fetched_at DESC LIMIT 1')
-      .get(url);
+      .get(canonical);
     if (cached && now() - cached.fetched_at < CACHE_MS) {
       return res.json({ ...shape(cached), cached: true, affiliate: { mode: 'cache' } });
     }
 
-    // affiliate convert (best-effort)
-    const aff = await convertLink(url);
+    // affiliate convert — sirf direct flipkart links (CK/EK already affiliate)
+    const aff =
+      resolved.platform === 'flipkart'
+        ? await convertLink(canonical)
+        : { url: resolved.affiliateUrl, mode: resolved.platform, converted: false, native: true };
 
     // real product data
-    const data = await fetchProductPage(url);
+    const data = await fetchProductPage(canonical);
     if (!data.title && !data.price) {
       return res.status(502).json({
         error: {
@@ -65,13 +75,15 @@ r.post(
     const t = now();
     const info = db
       .prepare(
-        `INSERT INTO products (url, pid, title, image, mrp, price, special_price, discount_pct,
+        `INSERT INTO products (url, platform, affiliate_url, pid, title, image, mrp, price, special_price, discount_pct,
                                in_stock, cod_product, offers_json, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
-        url,
-        new URL(url).searchParams.get('pid'),
+        canonical,
+        resolved.platform,
+        resolved.affiliateUrl,
+        new URL(canonical).searchParams.get('pid'),
         data.title,
         data.image,
         data.mrp,

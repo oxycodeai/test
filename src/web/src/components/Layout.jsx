@@ -4,14 +4,14 @@ const NAV = [
   { to: '/', label: 'Dashboard', ico: '▦' },
   { to: '/fetch', label: 'Fetch', ico: '🔍' },
   { to: '/accounts', label: 'Accounts', ico: '👤' },
-  { to: '/scan', label: 'Scan', ico: '📡' },
+  { to: '/booking', label: 'Book', ico: '📡' },
   { to: '/orders', label: 'Orders', ico: '🛒' },
   { to: '/commission', label: 'Commission', ico: '₹' },
   { to: '/settings', label: 'Settings', ico: '⚙' },
 ];
 
-// phone: 5 primary tabs (dashboard, fetch, scan, orders, more→accounts)
-const BOTTOM = ['/', '/fetch', '/scan', '/orders', '/accounts'];
+// phone: 5 primary tabs (dashboard, fetch, booking, orders, more→accounts)
+const BOTTOM = ['/', '/fetch', '/booking', '/orders', '/accounts'];
 
 export default function Layout({ onLogout }) {
   return (

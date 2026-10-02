@@ -20,6 +20,9 @@ function shape(row) {
     label: row.label,
     identifier_masked: maskIdentifier(row.identifier),
     status: row.status,
+    section_id: row.section_id ?? null,
+    section_name: row.section_name ?? null,
+    booked_until: row.booked_until ?? null,
     last_checked: row.last_checked,
     last_error: row.last_error,
     created_at: row.created_at,
@@ -29,24 +32,35 @@ function shape(row) {
 r.get(
   '/',
   h(async (req, res) => {
-    const { status, q } = req.query;
+    const { status, q, section_id } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
     const where = [];
     const args = [];
-    if (status && status !== 'all') {
-      where.push('status = ?');
+    if (status === 'booked') {
+      where.push('a.booked_until IS NOT NULL AND a.booked_until > ?');
+      args.push(now());
+    } else if (status && status !== 'all') {
+      where.push('a.status = ?');
       args.push(status);
     }
+    if (section_id && section_id !== 'all') {
+      where.push('a.section_id = ?');
+      args.push(Number(section_id));
+    }
     if (q) {
-      where.push('(identifier LIKE ? OR label LIKE ?)');
+      where.push('(a.identifier LIKE ? OR a.label LIKE ?)');
       args.push(`%${q}%`, `%${q}%`);
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const db = getDb();
-    const total = db.prepare(`SELECT COUNT(*) n FROM accounts ${clause}`).get(...args).n;
+    const total = db.prepare(`SELECT COUNT(*) n FROM accounts a ${clause}`).get(...args).n;
     const items = db
-      .prepare(`SELECT * FROM accounts ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT a.*, s.name AS section_name FROM accounts a
+         LEFT JOIN sections s ON s.id = a.section_id
+         ${clause} ORDER BY a.id DESC LIMIT ? OFFSET ?`
+      )
       .all(...args, limit, (page - 1) * limit)
       .map(shape);
     res.json({ items, total, page, limit });
@@ -100,7 +114,13 @@ r.post(
     let skipped = 0;
     const run = db.transaction(() => {
       for (const it of items) {
-        const id = typeof it === 'string' ? it.trim() : String(it.identifier || '').trim();
+        const rec = typeof it === 'string' ? { identifier: it } : it || {};
+        const id = String(
+          rec.identifier || rec.phone || rec.mobile || rec.phone_number || rec.number || rec.email || ''
+        )
+          .trim()
+          .replace(/^\+91\s?/, '')
+          .replace(/\s+/g, '');
         if (!validIdentifier(id)) {
           skipped++;
           continue;
@@ -110,7 +130,12 @@ r.post(
           continue;
         }
         const t = now();
-        insert.run(typeof it === 'string' ? null : it.label || null, id, t, t);
+        insert.run(
+          (rec.label || rec.username || rec.name || '').trim() || null,
+          id,
+          t,
+          t
+        );
         created++;
       }
     });
@@ -247,6 +272,54 @@ r.post(
     }
     for (const id of ids) enqueue('health', id);
     res.json({ queued: ids.length });
+  })
+);
+
+// ── Phase 3/4: section assign + booked release ───────────────
+
+r.post(
+  '/assign-section',
+  h(async (req, res) => {
+    const { ids, section_id } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: { code: 'invalid', message: 'ids[] required' } });
+    }
+    const db = getDb();
+    const sid = section_id == null ? null : Number(section_id);
+    if (sid != null && !db.prepare('SELECT id FROM sections WHERE id = ?').get(sid)) {
+      return res.status(404).json({ error: { code: 'not_found', message: 'No such section' } });
+    }
+    const upd = db.prepare(
+      'UPDATE accounts SET section_id = ?, updated_at = ? WHERE id = ?'
+    );
+    const t = now();
+    let updated = 0;
+    const run = db.transaction(() => {
+      for (const raw of ids) {
+        const id = Number(raw);
+        if (!Number.isFinite(id)) continue;
+        if (upd.run(sid, t, id).changes) updated++;
+      }
+    });
+    run();
+    res.json({ updated });
+  })
+);
+
+// Green pill release — booked_until hatao (manual override)
+r.post(
+  '/:id/release',
+  h(async (req, res) => {
+    const id = Number(req.params.id);
+    const info = getDb()
+      .prepare(
+        'UPDATE accounts SET booked_until = NULL, updated_at = ? WHERE id = ?'
+      )
+      .run(now(), id);
+    if (!info.changes) {
+      return res.status(404).json({ error: { code: 'not_found', message: 'No such account' } });
+    }
+    res.json({ ok: true });
   })
 );
 

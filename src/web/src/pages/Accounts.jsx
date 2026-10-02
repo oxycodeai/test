@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, timeAgo, openStream } from '../lib/api.js';
+import { parseAccountsJson } from '../lib/import.js';
 import { Button, Pill, Modal, EmptyState, Skeleton } from '../components/ui.jsx';
 import { useToast } from '../components/Toasts.jsx';
 
-const STATUSES = ['all', 'active', 'expired', 'pending', 'error'];
+const STATUSES = ['all', 'active', 'booked', 'expired', 'pending', 'error'];
+
+function bookedDaysLeft(ts) {
+  if (!ts || ts <= Date.now()) return null;
+  return Math.max(1, Math.ceil((ts - Date.now()) / 86400000));
+}
 
 export default function Accounts() {
   const toast = useToast();
@@ -11,14 +17,22 @@ export default function Accounts() {
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState('all');
   const [q, setQ] = useState('');
+  const [sectionId, setSectionId] = useState('all');
+  const [sections, setSections] = useState([]);
   const [sel, setSel] = useState(new Set());
-  const [modal, setModal] = useState(null); // 'single' | 'bulk'
+  const [modal, setModal] = useState(null); // 'single' | 'bulk' | 'import'
   const [wizard, setWizard] = useState(null); // {id, name, mode}
   const [busy, setBusy] = useState(false);
+
+  const loadSections = () =>
+    api('/sections')
+      .then((r) => setSections(r.items))
+      .catch(() => {});
 
   const load = async () => {
     const params = new URLSearchParams({ status, limit: '200' });
     if (q.trim()) params.set('q', q.trim());
+    if (sectionId !== 'all') params.set('section_id', sectionId);
     const r = await api(`/accounts?${params}`);
     setItems(r.items);
     setTotal(r.total);
@@ -26,19 +40,25 @@ export default function Accounts() {
   };
 
   useEffect(() => {
-    load().catch((e) => toast(e.message, 'error'));
-  }, [status]);
+    loadSections();
+  }, []);
 
-  // live refresh — expired badge / login done pe turant update (F3)
+  useEffect(() => {
+    load().catch((e) => toast(e.message, 'error'));
+  }, [status, sectionId]);
+
+  // live refresh — expired badge / login done / order placed pe turant update
   useEffect(() => {
     const es = openStream({
       session_expired: () => load().catch(() => {}),
+      order_placed: () => load().catch(() => {}),
       job_done: (d) => {
-        if (['otp_request', 'otp_verify', 'health'].includes(d.type)) load().catch(() => {});
+        if (['otp_request', 'otp_verify', 'health', 'order'].includes(d.type))
+          load().catch(() => {});
       },
     });
     return () => es.close();
-  }, [status]);
+  }, [status, sectionId]);
 
   const allSelected = items && items.length > 0 && sel.size === items.length;
 
@@ -97,6 +117,34 @@ export default function Accounts() {
       mode: a.status === 'expired' || a.status === 'error' ? 'relogin' : 'login',
     });
 
+  const releaseOne = async (id) => {
+    try {
+      await api(`/accounts/${id}/release`, { method: 'POST' });
+      toast('Booked flag hata diya — account free', 'success');
+      load();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  const assignSection = async (sid) => {
+    if (sel.size === 0) return;
+    setBusy(true);
+    try {
+      const r = await api('/accounts/assign-section', {
+        method: 'POST',
+        body: { ids: [...sel], section_id: sid === '' ? null : Number(sid) },
+      });
+      toast(`${r.updated} account(s) assigned`, 'success');
+      load();
+      loadSections();
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
       <div className="page-head">
@@ -111,7 +159,7 @@ export default function Accounts() {
       <div className="toolbar">
         <input
           className="input"
-          style={{ maxWidth: 220, height: 36 }}
+          style={{ maxWidth: 200, height: 36 }}
           placeholder="Search label/number…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -119,7 +167,7 @@ export default function Accounts() {
         />
         <select
           className="input"
-          style={{ maxWidth: 130, height: 36 }}
+          style={{ maxWidth: 120, height: 36 }}
           value={status}
           onChange={(e) => setStatus(e.target.value)}
         >
@@ -129,7 +177,23 @@ export default function Accounts() {
             </option>
           ))}
         </select>
+        <select
+          className="input"
+          style={{ maxWidth: 140, height: 36 }}
+          value={sectionId}
+          onChange={(e) => setSectionId(e.target.value)}
+        >
+          <option value="all">All sections</option>
+          {sections.map((s) => (
+            <option key={s.id} value={String(s.id)}>
+              {s.name} ({s.accounts})
+            </option>
+          ))}
+        </select>
         <span className="spacer" />
+        <Button variant="outline" size="sm" onClick={() => setModal('import')}>
+          ⬆ Import JSON
+        </Button>
         <Button variant="outline" size="sm" onClick={() => setModal('bulk')}>
           + Bulk Add
         </Button>
@@ -166,9 +230,10 @@ export default function Accounts() {
                 </th>
                 <th>Label</th>
                 <th>Identifier</th>
+                <th>Section</th>
                 <th>Status</th>
                 <th>Last checked</th>
-                <th style={{ width: 150 }}>Actions</th>
+                <th style={{ width: 170 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -186,8 +251,18 @@ export default function Accounts() {
                   <td data-label="Number" className="num">
                     {a.identifier_masked}
                   </td>
+                  <td data-label="Section" className="small">
+                    {a.section_name || <span className="muted">—</span>}
+                  </td>
                   <td data-label="Status">
-                    <Pill status={a.status} />
+                    {bookedDaysLeft(a.booked_until) ? (
+                      <span className="pill green" title={`Booked till ${new Date(a.booked_until).toLocaleString()}`}>
+                        <span className="dot" />
+                        Booked {bookedDaysLeft(a.booked_until)}d
+                      </span>
+                    ) : (
+                      <Pill status={a.status} />
+                    )}
                     {a.last_error && a.status !== 'active' && (
                       <div className="small muted" title={a.last_error}>
                         {String(a.last_error).slice(0, 42)}
@@ -208,6 +283,11 @@ export default function Accounts() {
                           {a.status === 'pending' ? 'Login' : 'Re-login'}
                         </Button>
                       )}
+                      {bookedDaysLeft(a.booked_until) && (
+                        <Button size="sm" variant="outline" onClick={() => releaseOne(a.id)}>
+                          Release
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" onClick={() => removeOne(a.id)}>
                         ✕
                       </Button>
@@ -223,6 +303,21 @@ export default function Accounts() {
       {sel.size > 0 && (
         <div className="batch-bar">
           <span className="count">{sel.size} selected</span>
+          <select
+            className="input"
+            style={{ maxWidth: 170, height: 34 }}
+            defaultValue=""
+            disabled={busy}
+            onChange={(e) => e.target.value !== '' && assignSection(e.target.value)}
+            aria-label="Assign to section"
+          >
+            <option value="">Assign to section…</option>
+            {sections.map((s) => (
+              <option key={s.id} value={String(s.id)}>
+                {s.name}
+              </option>
+            ))}
+          </select>
           <span className="spacer" style={{ flex: 1 }} />
           <Button size="sm" variant="outline" onClick={checkHealth} disabled={busy}>
             Check health
@@ -249,6 +344,16 @@ export default function Accounts() {
           onSaved={(r) => {
             setModal(null);
             toast(`Created ${r.created}, skipped ${r.skipped}`, r.skipped ? 'warn' : 'success');
+            load();
+          }}
+        />
+      )}
+      {modal === 'import' && (
+        <ImportJson
+          onClose={() => setModal(null)}
+          onSaved={(r) => {
+            setModal(null);
+            toast(`Imported ${r.created}, skipped ${r.skipped}`, r.skipped ? 'warn' : 'success');
             load();
           }}
         />
@@ -622,6 +727,98 @@ function AddBulk({ onClose, onSaved }) {
         />
         <div className="hint">{parsed.length} line(s) parsed · duplicates apne aap skip honge</div>
       </div>
+      {err && <div className="error-text">{err}</div>}
+    </Modal>
+  );
+}
+
+/** Import JSON — export file paste/upload → parse → /accounts/bulk (Phase 3.1). */
+function ImportJson({ onClose, onSaved }) {
+  const [text, setText] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const parsed = useMemo(() => {
+    if (!text.trim()) return { items: [], skipped: 0, total: 0 };
+    try {
+      return parseAccountsJson(text);
+    } catch (e) {
+      return { error: e.message, items: [], skipped: 0, total: 0 };
+    }
+  }, [text]);
+
+  const onFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => setText(String(reader.result || ''));
+    reader.readAsText(f);
+  };
+
+  const save = async () => {
+    if (parsed.error || parsed.items.length === 0) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const r = await api('/accounts/bulk', { method: 'POST', body: { items: parsed.items } });
+      onSaved({ ...r, skipped: r.skipped + parsed.skipped });
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const preview = parsed.items.slice(0, 5);
+
+  return (
+    <Modal
+      title="Import Accounts (JSON)"
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={save}
+            disabled={busy || !!parsed.error || parsed.items.length === 0}
+          >
+            {busy ? 'Importing…' : `Import ${parsed.items.length}`}
+          </Button>
+        </>
+      }
+    >
+      <div className="field">
+        <label>JSON file</label>
+        <input className="input" type="file" accept=".json,application/json" onChange={onFile} />
+        <div className="hint">
+          Flexible fields — phone/mobile/phone_number/number/email (identifier), label/username/name
+          (label). Tokens &amp; session data ignore hote hain.
+        </div>
+      </div>
+      <div className="field">
+        <label>…ya JSON paste karo</label>
+        <textarea
+          className="input"
+          rows={6}
+          placeholder='[{"phone":"+91 98123 45678","label":"Shop-1"}, "9876543210"]'
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+      </div>
+      {parsed.error && <div className="error-text">{parsed.error}</div>}
+      {!parsed.error && text.trim() && (
+        <div className="hint">
+          {parsed.items.length} ready · {parsed.skipped} skip
+          {preview.length > 0 && (
+            <div className="small muted" style={{ marginTop: 4 }}>
+              e.g. {preview.map((p) => `${p.identifier}${p.label ? ` (${p.label})` : ''}`).join(' · ')}
+            </div>
+          )}
+        </div>
+      )}
       {err && <div className="error-text">{err}</div>}
     </Modal>
   );

@@ -91,3 +91,16 @@ export function takePendingOtp(accountId) {
   pendingOtp.delete(accountId);
   return v || null;
 }
+
+/** orderId -> manual captcha text (memory only, consume-once). */
+const pendingCaptcha = new Map();
+
+export function setPendingCaptcha(orderId, text) {
+  pendingCaptcha.set(orderId, String(text));
+}
+
+export function takePendingCaptcha(orderId) {
+  const v = pendingCaptcha.get(orderId);
+  pendingCaptcha.delete(orderId);
+  return v || null;
+}

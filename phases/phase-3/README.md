@@ -1,55 +1,50 @@
-# Phase 3 — Scan Engine (COD + Per-Account Price) + Qty Logic
+# Phase 3 — Import + Sections + Address Book + CashKaro/EarnKaro Fetch
 
-**Goal:** Start Scan → har account ka real personalized price/offer/COD comparison table + qty validation.
+**Goal:** JSON import, section grouping, saved address book, multi-platform fetch (Flipkart/CashKaro/EarnKaro).
 **Depends on:** Phase 2 DoD approved.
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete (2026-10-02) — scope changed: scan engine hataya (per-account price quote ab booking wizard andar hai, Phase 4).
 
 ## Tasks
 
-### 3.1 Product Deep-Fetch (F5 base)
+### 3.1 JSON Import (accounts)
 
-- [ ] `shared/selectors.js` — `#__NEXT_DATA__` path config + JSON-LD fallback + content-pattern regex (INTEGRATIONS B3); **verify actual JSON paths** on live Flipkart product page while implementing
-- [ ] Extractor: page → price, MRP, special price, offers[], stock, product-level COD text
-- [ ] pid parse from URL; product row update with `fetched_at`
+- [x] Client parser `src/web/src/lib/import.js` — flexible fields (`identifier|phone|mobile|phone_number|number|email`, `label|username|name`), `+91`/leading-0 normalize, array-of-strings OK, duplicates skip
+- [x] Bulk route `POST /accounts/bulk` — same flexible keys server-side
+- [x] Accounts UI — **⬆ Import JSON** (file upload + paste, preview `N ready · M skip`, reuse bulk → `Created X, skipped Y`)
+- [x] `.gitignore` += `accounts_export*.json` (token wale exports kabhi commit nahi)
+- [x] Verified: real `accounts_export_*.json` (6 Stan accounts) → 6/6 parsed, tokens ignored
 
-### 3.2 Scan Job Pipeline (F5)
+### 3.2 Sections (account groups)
 
-- [ ] `POST /api/scan` — `{product_id, qty, qty_mode, per_acc_qty}` → `scan_jobs` row + per-account `jobs` queue entries; **409** if qty > active accs (with `{available}`)
-- [ ] Worker `scan` runner — per account: load session → goto product → extract → write `scan_results`; expired mid-scan → row `status='expired'`, account flagged
-- [ ] Rate limiting: `scan_concurrency` (≤2) + `REQ_DELAY_*` jitter enforced
-- [ ] Progress: update `scan_jobs.progress/total` + SSE `progress` + `result` events (rows stream)
-- [ ] Cancel endpoint (stop remaining queue entries)
+- [x] `sections` table (before accounts), accounts.`section_id` FK (ON DELETE SET NULL), guarded `ALTER` in `migrate.js`
+- [x] `GET/POST/DELETE /api/sections` (409 duplicate, counts: accounts/active/booked)
+- [x] `POST /api/accounts/assign-section {ids, section_id|null}`
+- [x] Accounts UI — Section column, section filter dropdown, batch-bar "Assign to section…"
+- [x] Settings UI — Sections card (create/delete + counts)
 
-### 3.3 Qty Logic (F6, F7)
+### 3.3 Address Book
 
-- [ ] Qty guard pre-scan — total mode: `qty > active` → 409; UI warning strip `⚠ Sirf N active hain`
-- [ ] `qty_mode='total'`: overall qty distribute karna allocation stage me (Phase 4); scan sab active accounts pe
-- [ ] `qty_mode='per_account'`: `per_acc_qty` × accounts = effective demand; warning agar `per_acc_qty` > stock
-- [ ] Validation both modes in UI live (input change pe check)
+- [x] `addresses` table (name/phone/pincode/line1/line2/city/state/is_default)
+- [x] `GET/POST/PUT/DELETE /api/addresses` (validation: 6-digit pincode, 10-15 digit phone, single default)
+- [x] Settings UI — Address Book card (CRUD modal)
+- [x] Booking wizard uses it; checkout par sirf yehi address add/select hota hai (purane nahi)
 
-### 3.4 Scan UI (F5, F8, F9)
+### 3.4 CashKaro/EarnKaro Fetch
 
-- [ ] `/scan` config card — product picker (last fetched) ya link paste, qty input, mode toggle (Total | Per account), per-acc qty field, yellow **Start Scan**
-- [ ] Qty warning strip (red-tinted, non-blocking) — UI-UX §3.5
-- [ ] Progress bar (yellow) + `progress/total` + ETA + cancel
-- [ ] **Comparison table** (real data): Account | Price ₹ | Special ₹ | Offers | COD pill | Eligible | Status
-  - BEST price row highlight (yellow border + chip)
-  - non-COD muted + Eligible ✗ (auto-exclude visual)
-  - sortable columns; mobile card-list conversion
-- [ ] Summary strip `12/12 · 9 COD · best ₹1,299 (Shop-03) · 3 excluded`
-- [ ] Export CSV (`scan_results`)
+- [x] `pageFetch.js` — `detectPlatform`, `isSupportedAffiliateUrl`, `resolveAffiliateUrl` (HTTP redirect loop ≤10 hops → Playwright fallback for JS/meta redirect → must land on flipkart `/p/`), `fetchProductWithSession` (session-based personalized price, quote step ke liye)
+- [x] `products` += `platform`, `affiliate_url` (guarded ALTER); row stores canonical flipkart URL + original affiliate link
+- [x] `POST /products/fetch` — accepts all 3 platforms; Cuelinks convert sirf `platform='flipkart'` ke liye; CK/EK link khud native affiliate hota hai
+- [x] Fetch UI — copy + platform pill + native-affiliate label
 
-## DoD (Definition of Done)
+## DoD
 
-- [ ] 10 active accounts + 1 product → Start Scan → **real per-account prices/offers/COD** table (session data, not product-level copy)
-- [ ] Ek account expired → row expired + red badge, scan baaki complete
-- [ ] qty 5, active 4 → clear warning/409, scan nahi chala (mode: total)
-- [ ] per-account mode: `per_acc_qty` validation working
-- [ ] Non-COD accounts auto-excluded (eligible ✗) + best price highlighted
-- [ ] Live progress (SSE) — rows stream hoti hain, page refresh nahi
-- [ ] Scan 10 acc < ~1 min (throttle ke andar) — no rate-limit block
-- [ ] CSV export correct; lint/test green
+- [x] Import JSON (file/paste) → created/skipped counts; real export file 6/6
+- [x] Sections CRUD + assign + filter; counts live
+- [x] Address CRUD + default; booking wizard select karta hai
+- [x] CK/EK paste → resolve → product fetch (IP-block hone par honest error)
+- [x] Existing DB migrate (guarded columns) + lint + 20/20 tests + web build
+- [ ] Real CK/EK link se live fetch (Flipkart IP cooldown ke baad)
 
 ## Exit
 
-→ Phase 4 (Orders Hybrid + Commission)
+→ Phase 4 (Booking Engine + Orders)
