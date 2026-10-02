@@ -9,7 +9,7 @@ Status tracker yahan live update hota hai.
 | ----- | ------------------------------------ | -------------- | ----- |
 | 0     | Documentation                        | ✅ Done        | 8/8   |
 | 1     | Foundation + Theme + Fetch + Hosting | 🔄 In Progress | 12/14 |
-| 2     | Multi-Login + Sessions + Alerts      | ⬜ Not Started | 0/12  |
+| 2     | Multi-Login + Sessions + Alerts      | 🔄 In Progress | 19/19 |
 | 3     | Scan Engine + Qty Logic              | ⬜ Not Started | 0/13  |
 | 4     | Orders (Hybrid) + Commission         | ⬜ Not Started | 0/14  |
 | 5     | Bulk/Perf Polish + PWA               | ⬜ Not Started | 0/10  |

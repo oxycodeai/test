@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { h } from '../middleware/error.js';
 import { getDb } from '../../db/index.js';
 import { now, maskIdentifier } from '../../shared/constants.js';
+import { enqueue, waitForJob } from '../../worker/queue.js';
+import { assertLoginRate, setPendingOtp, latestRequestId } from '../../worker/otp-store.js';
+import { deleteSession } from '../services/sessionStore.js';
 
 const r = Router();
 
@@ -119,11 +122,131 @@ r.post(
 r.delete(
   '/:id',
   h(async (req, res) => {
-    const info = getDb().prepare('DELETE FROM accounts WHERE id = ?').run(req.params.id);
+    const id = Number(req.params.id);
+    deleteSession(id); // file + sessions row (account cascade se pehle)
+    const info = getDb().prepare('DELETE FROM accounts WHERE id = ?').run(id);
     if (!info.changes) {
       return res.status(404).json({ error: { code: 'not_found', message: 'No such account' } });
     }
     res.json({ ok: true });
+  })
+);
+
+// ── Phase 2: OTP login + health (F2, F3) ────────────────────
+
+/** Job failure → HTTP mapping (heuristics — job row me sirf message hai). */
+function jobErrorResponse(res, job) {
+  if (job.status === 'timeout') {
+    return res
+      .status(504)
+      .json({ error: { code: 'timeout', message: 'Flipkart me bahut delay — 30s baad retry karo' } });
+  }
+  const msg = job.last_error || 'Job failed';
+  let status = 502;
+  let code = 'upstream_error';
+  if (/invalid otp/i.test(msg)) {
+    status = 400;
+    code = 'invalid_otp';
+  } else if (/window.*khatam|expired/i.test(msg)) {
+    status = 410;
+    code = 'otp_expired';
+  } else if (/rate limit/i.test(msg)) {
+    status = 429;
+    code = 'rate_limited';
+  } else if (/block|throttl|otp screen|fail:/i.test(msg)) {
+    status = 429;
+    code = 'flipkart_blocked';
+  } else if (/identifier/i.test(msg)) {
+    status = 400;
+    code = 'invalid';
+  } else if (/nahi mila/i.test(msg)) {
+    status = 404;
+    code = 'not_found';
+  }
+  res.status(status).json({ error: { code, message: msg } });
+}
+
+async function runLoginJob(res, type, accountId, timeoutMs, okPayload) {
+  const jobId = enqueue(type, accountId);
+  const job = await waitForJob(jobId, { timeoutMs });
+  if (job.status === 'done') return res.json(okPayload);
+  return jobErrorResponse(res, job);
+}
+
+// Step 1 — Send OTP (page 5 min RAM me; response tab jab OTP screen aaye)
+r.post(
+  '/:id/otp-request',
+  h(async (req, res) => {
+    const accountId = Number(req.params.id);
+    const acc = getDb().prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+    if (!acc) {
+      return res.status(404).json({ error: { code: 'not_found', message: 'No such account' } });
+    }
+    try {
+      assertLoginRate();
+    } catch (e) {
+      return res.status(e.status || 429).json({
+        error: { code: 'rate_limited', message: e.message },
+      });
+    }
+    await runLoginJob(res, 'otp_request', accountId, 90000, {
+      ok: true,
+      accountId,
+      otpRequestId: latestRequestId(accountId),
+    });
+  })
+);
+
+// Step 2 — Verify OTP → session save → status active
+r.post(
+  '/:id/login',
+  h(async (req, res) => {
+    const accountId = Number(req.params.id);
+    const acc = getDb().prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+    if (!acc) {
+      return res.status(404).json({ error: { code: 'not_found', message: 'No such account' } });
+    }
+    const otp = String(req.body?.otp || '').replace(/\D/g, '');
+    if (!/^\d{6}$/.test(otp)) {
+      return res
+        .status(400)
+        .json({ error: { code: 'invalid', message: 'OTP 6 digit hona chahiye' } });
+    }
+    try {
+      assertLoginRate();
+    } catch (e) {
+      return res.status(e.status || 429).json({
+        error: { code: 'rate_limited', message: e.message },
+      });
+    }
+    setPendingOtp(accountId, otp); // memory only — handler consume karega
+    await runLoginJob(res, 'otp_verify', accountId, 60000, {
+      ok: true,
+      accountId,
+      status: 'active',
+    });
+  })
+);
+
+// Batch health check — ids diye to wahi, warna sab active
+r.post(
+  '/health',
+  h(async (req, res) => {
+    const db = getDb();
+    let ids = req.body?.ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      ids = db
+        .prepare(`SELECT id FROM accounts WHERE status = 'active'`)
+        .all()
+        .map((x) => x.id);
+    } else {
+      ids = ids.map(Number).filter(Number.isFinite);
+    }
+    if (ids.length === 0) {
+      return res.json({ queued: 0 });
+    }
+    for (const id of ids) enqueue('health', id);
+    res.json({ queued: ids.length });
   })
 );
 

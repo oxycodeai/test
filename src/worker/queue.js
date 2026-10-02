@@ -23,10 +23,33 @@ export function getJob(id) {
   return getDb().prepare('SELECT * FROM jobs WHERE id = ?').get(id);
 }
 
+/**
+ * Job ke done/failed hone ka wait (API synchronous OTP response ke liye).
+ * Timeout par `{...job, status:'timeout'}` — job background me chalta rehta hai.
+ */
+export function waitForJob(id, { timeoutMs = 90000, pollMs = 250 } = {}) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () => {
+      const job = getJob(id);
+      if (job && (job.status === 'done' || job.status === 'failed')) return resolve(job);
+      if (Date.now() - start >= timeoutMs) return resolve({ ...(job || {}), status: 'timeout' });
+      setTimeout(check, pollMs);
+    };
+    check();
+  });
+}
+
 function claimNext() {
   const db = getDb();
+  // OTP jobs interactive hain — health/scan batch ke aage priority (UX)
   const row = db
-    .prepare(`SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at ASC, id ASC LIMIT 1`)
+    .prepare(
+      `SELECT * FROM jobs WHERE status = 'queued'
+       ORDER BY CASE WHEN type IN ('otp_request','otp_verify') THEN 0 ELSE 1 END,
+                created_at ASC, id ASC
+       LIMIT 1`
+    )
     .get();
   if (!row) return null;
   db.prepare(
@@ -70,7 +93,8 @@ export function startWorker({ intervalMs = 1500, onEvent = () => {} } = {}) {
             );
             onEvent({ type: 'job_done', job });
           } catch (err) {
-            fail(job, err.message || String(err), true, onEvent);
+            // err.noRetry (user errors: invalid OTP, rate limit) → turant fail
+            fail(job, err.message || String(err), !err.noRetry, onEvent);
           }
         }
       }

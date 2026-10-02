@@ -9,10 +9,11 @@ export function setToken(t) {
 }
 
 export class ApiError extends Error {
-  constructor(status, code, message) {
+  constructor(status, code, message, details = {}) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -30,7 +31,8 @@ export async function api(path, { method = 'GET', body } = {}) {
     const err = new ApiError(
       res.status,
       data.error?.code || 'error',
-      data.error?.message || res.statusText
+      data.error?.message || res.statusText,
+      data.error || {}
     );
     if (res.status === 401) window.dispatchEvent(new Event('kb:unauthorized'));
     throw err;

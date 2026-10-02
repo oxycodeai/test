@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, timeAgo } from '../lib/api.js';
+import { api, timeAgo, openStream } from '../lib/api.js';
 import { Button, Pill, Modal, EmptyState, Skeleton } from '../components/ui.jsx';
 import { useToast } from '../components/Toasts.jsx';
 
@@ -13,6 +13,7 @@ export default function Accounts() {
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(new Set());
   const [modal, setModal] = useState(null); // 'single' | 'bulk'
+  const [wizard, setWizard] = useState(null); // {id, name, mode}
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
@@ -26,6 +27,17 @@ export default function Accounts() {
 
   useEffect(() => {
     load().catch((e) => toast(e.message, 'error'));
+  }, [status]);
+
+  // live refresh — expired badge / login done pe turant update (F3)
+  useEffect(() => {
+    const es = openStream({
+      session_expired: () => load().catch(() => {}),
+      job_done: (d) => {
+        if (['otp_request', 'otp_verify', 'health'].includes(d.type)) load().catch(() => {});
+      },
+    });
+    return () => es.close();
   }, [status]);
 
   const allSelected = items && items.length > 0 && sel.size === items.length;
@@ -54,8 +66,36 @@ export default function Accounts() {
     }
   };
 
-  const checkHealth = () =>
-    toast('Health check Phase 2 me aayega (session login ke saath)', 'warn');
+  const removeOne = async (id) => {
+    if (!confirm('Delete account + session?')) return;
+    try {
+      await api(`/accounts/${id}`, { method: 'DELETE' });
+      toast('Account deleted', 'success');
+      load();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  const checkHealth = async () => {
+    setBusy(true);
+    try {
+      const r = await api('/accounts/health', { method: 'POST', body: { ids: [...sel] } });
+      toast(`Health check queued (${r.queued})`, 'info');
+      setTimeout(() => load().catch(() => {}), 3500);
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openLogin = (a) =>
+    setWizard({
+      id: a.id,
+      name: a.label || a.identifier_masked,
+      mode: a.status === 'expired' || a.status === 'error' ? 'relogin' : 'login',
+    });
 
   return (
     <div>
@@ -128,6 +168,7 @@ export default function Accounts() {
                 <th>Identifier</th>
                 <th>Status</th>
                 <th>Last checked</th>
+                <th style={{ width: 150 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -147,9 +188,30 @@ export default function Accounts() {
                   </td>
                   <td data-label="Status">
                     <Pill status={a.status} />
+                    {a.last_error && a.status !== 'active' && (
+                      <div className="small muted" title={a.last_error}>
+                        {String(a.last_error).slice(0, 42)}
+                      </div>
+                    )}
                   </td>
                   <td data-label="Checked" className="muted small">
                     {timeAgo(a.last_checked)}
+                  </td>
+                  <td data-label="Actions">
+                    <div className="row" style={{ gap: 6 }}>
+                      {a.status !== 'active' && (
+                        <Button
+                          size="sm"
+                          variant={a.status === 'pending' ? 'blue' : 'outline'}
+                          onClick={() => openLogin(a)}
+                        >
+                          {a.status === 'pending' ? 'Login' : 'Re-login'}
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" onClick={() => removeOne(a.id)}>
+                        ✕
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -162,7 +224,7 @@ export default function Accounts() {
         <div className="batch-bar">
           <span className="count">{sel.size} selected</span>
           <span className="spacer" style={{ flex: 1 }} />
-          <Button size="sm" variant="outline" onClick={checkHealth}>
+          <Button size="sm" variant="outline" onClick={checkHealth} disabled={busy}>
             Check health
           </Button>
           <Button size="sm" variant="danger" onClick={removeMany} disabled={busy}>
@@ -176,7 +238,7 @@ export default function Accounts() {
           onClose={() => setModal(null)}
           onSaved={() => {
             setModal(null);
-            toast('Account added', 'success');
+            toast('Account login ho gaya — session saved', 'success');
             load();
           }}
         />
@@ -191,31 +253,272 @@ export default function Accounts() {
           }}
         />
       )}
+      {wizard && (
+        <OtpWizard
+          account={wizard}
+          onClose={() => setWizard(null)}
+          onDone={() => {
+            setWizard(null);
+            toast(
+              wizard.mode === 'relogin' ? 'Re-login successful — session saved' : 'Login successful',
+              'success'
+            );
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function AddSingle({ onClose, onSaved }) {
-  const [label, setLabel] = useState('');
-  const [identifier, setIdentifier] = useState('');
-  const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
+/** 6-box OTP input — auto-advance, backspace, paste (UI-UX §3.4). */
+function OtpBoxes({ value, onChange, disabled }) {
+  const refs = useState(() => Array(6).fill(null).map(() => ({ current: null })))[0];
+  const digits = value.padEnd(6, ' ').slice(0, 6).split('');
 
-  const save = async () => {
+  const setAt = (i, ch) => {
+    const arr = value.padEnd(6, ' ').split('');
+    arr[i] = ch;
+    onChange(arr.join('').replace(/\s+$/, '').trimEnd());
+  };
+
+  const onKey = (i) => (e) => {
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      setAt(i, ' ');
+      if (i > 0) refs[i - 1].current?.focus();
+    } else if (e.key === 'ArrowLeft' && i > 0) {
+      refs[i - 1].current?.focus();
+    } else if (e.key === 'ArrowRight' && i < 5) {
+      refs[i + 1].current?.focus();
+    }
+  };
+
+  const onInput = (i) => (e) => {
+    const ch = e.target.value.replace(/\D/g, '').slice(-1);
+    if (!ch) return;
+    setAt(i, ch);
+    if (i < 5) refs[i + 1].current?.focus();
+  };
+
+  const onPaste = (e) => {
+    const text = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+    if (text) {
+      e.preventDefault();
+      onChange(text);
+      refs[Math.min(text.length, 5)].current?.focus();
+    }
+  };
+
+  return (
+    <div className="row" style={{ gap: 8, justifyContent: 'center' }} onPaste={onPaste}>
+      {digits.map((d, i) => (
+        <input
+          key={i}
+          ref={(el) => {
+            refs[i].current = el;
+          }}
+          className="input"
+          style={{
+            width: 44,
+            height: 52,
+            textAlign: 'center',
+            fontSize: 22,
+            fontWeight: 700,
+            padding: 0,
+          }}
+          inputMode="numeric"
+          maxLength={1}
+          value={d.trim()}
+          disabled={disabled}
+          aria-label={`OTP digit ${i + 1}`}
+          onChange={onInput(i)}
+          onKeyDown={onKey(i)}
+          onFocus={(e) => e.target.select()}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Step 2 — OTP enter + Verify (AddSingle aur Wizard dono use karte hain). */
+function OtpStep({ accountId, onSuccess, onBack }) {
+  const [otp, setOtp] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const verify = async () => {
+    if (otp.replace(/\D/g, '').length !== 6) {
+      setErr('6 digit OTP bharo');
+      return;
+    }
     setBusy(true);
     setErr('');
     try {
-      await api('/accounts', {
-        method: 'POST',
-        body: { label: label.trim() || null, identifier: identifier.trim() },
-      });
-      onSaved();
+      await api(`/accounts/${accountId}/login`, { method: 'POST', body: { otp } });
+      onSuccess();
+    } catch (e) {
+      setErr(e.message);
+      if (e.code === 'otp_expired') setOtp('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="hint" style={{ textAlign: 'center', marginBottom: 12 }}>
+        OTP aapke phone/email pe aaya — 6 digit yahan bharo (5 min me verify karo).
+      </div>
+      <OtpBoxes value={otp} onChange={setOtp} disabled={busy} />
+      {err && (
+        <div className="error-text" style={{ textAlign: 'center' }}>
+          {err}
+        </div>
+      )}
+      <div className="row" style={{ gap: 8, marginTop: 14, justifyContent: 'center' }}>
+        {onBack && (
+          <Button variant="ghost" onClick={onBack} disabled={busy}>
+            ← Back
+          </Button>
+        )}
+        <Button variant="primary" onClick={verify} disabled={busy}>
+          {busy ? 'Verifying…' : 'Verify & Save'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** OTP wizard — Send OTP → enter OTP → success (row Login/Re-login). */
+function OtpWizard({ account, onClose, onDone }) {
+  const [step, setStep] = useState(1); // 1 send · 2 otp · 3 done
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const send = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      await api(`/accounts/${account.id}/otp-request`, { method: 'POST' });
+      setStep(2);
     } catch (e) {
       setErr(e.message);
     } finally {
       setBusy(false);
     }
   };
+
+  const success = () => {
+    setStep(3);
+    setTimeout(onDone, 900);
+  };
+
+  const title =
+    account.mode === 'relogin'
+      ? `Re-login — ${account.name}`
+      : `Login OTP — ${account.name}`;
+
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      actions={
+        step !== 3 && (
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+        )
+      }
+    >
+      {step === 1 && (
+        <div>
+          <div className="hint" style={{ textAlign: 'center', marginBottom: 12 }}>
+            Flipkart pe OTP bhejenge — phir wahi number/email OTP dega.
+          </div>
+          {err && <div className="error-text">{err}</div>}
+          <div className="row" style={{ justifyContent: 'center' }}>
+            <Button variant="blue" onClick={send} disabled={busy}>
+              {busy ? 'OTP bheja…' : 'Send OTP'}
+            </Button>
+          </div>
+        </div>
+      )}
+      {step === 2 && (
+        <OtpStep accountId={account.id} onSuccess={success} onBack={() => setStep(1)} />
+      )}
+      {step === 3 && (
+        <div style={{ textAlign: 'center', padding: '10px 0' }}>
+          <div style={{ fontSize: 40 }}>✅</div>
+          <div style={{ fontWeight: 600 }}>Session saved — account Active</div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/** Add Account — create → auto Send OTP → verify (spec §3.4 combined). */
+function AddSingle({ onClose, onSaved }) {
+  const [label, setLabel] = useState('');
+  const [identifier, setIdentifier] = useState('');
+  const [created, setCreated] = useState(null); // {id}
+  const [step, setStep] = useState(1); // 1 form · 2 otp · 3 done
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const start = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      let id = created?.id;
+      if (!id) {
+        try {
+          const a = await api('/accounts', {
+            method: 'POST',
+            body: { label: label.trim() || null, identifier: identifier.trim() },
+          });
+          id = a.id;
+        } catch (e) {
+          if (e.code === 'duplicate' && e.details?.accountId) {
+            id = e.details.accountId; // pehle se hai → usi pe OTP
+          } else {
+            setErr(e.message);
+            return;
+          }
+        }
+        setCreated({ id });
+      }
+      await api(`/accounts/${id}/otp-request`, { method: 'POST' });
+      setStep(2);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const success = () => {
+    setStep(3);
+    setTimeout(onSaved, 900);
+  };
+
+  if (step === 2) {
+    return (
+      <Modal title={`Verify OTP — ${label || identifier}`} onClose={onClose}>
+        <OtpStep accountId={created.id} onSuccess={success} onBack={() => setStep(1)} />
+      </Modal>
+    );
+  }
+  if (step === 3) {
+    return (
+      <Modal title="Account ready" onClose={onClose}>
+        <div style={{ textAlign: 'center', padding: '10px 0' }}>
+          <div style={{ fontSize: 40 }}>✅</div>
+          <div style={{ fontWeight: 600 }}>Session saved — account Active</div>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal
@@ -226,8 +529,8 @@ function AddSingle({ onClose, onSaved }) {
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={save} disabled={busy || !identifier.trim()}>
-            {busy ? 'Saving…' : 'Add'}
+          <Button variant="primary" onClick={start} disabled={busy || !identifier.trim()}>
+            {busy ? 'Sending OTP…' : 'Send OTP'}
           </Button>
         </>
       }
@@ -242,7 +545,7 @@ function AddSingle({ onClose, onSaved }) {
           autoFocus
         />
         <div className="hint">
-          OTP aapke number/email pe aayega — login wizard Phase 2 me aayega.
+          OTP aapke number/email pe aayega — wahi 6 digit next step me bharoge.
         </div>
       </div>
       <div className="field">

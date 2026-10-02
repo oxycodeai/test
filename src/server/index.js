@@ -40,6 +40,12 @@ startJobWorker({
   },
 });
 
+// health sweep — har health_interval_min pe active sessions check (F3)
+{
+  const { startHealthScheduler } = await import('./health-scheduler.js');
+  startHealthScheduler();
+}
+
 const server = app.listen(config.port, () => {
   console.log(`✔ KartBulk server  http://localhost:${config.port}  [${platformName()}]`);
   console.log(

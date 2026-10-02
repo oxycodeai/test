@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, inr, timeAgo } from '../lib/api.js';
+import { api, inr, timeAgo, openStream } from '../lib/api.js';
 import { StatCard, Skeleton, EmptyState, Pill } from '../components/ui.jsx';
 
 export default function Dashboard() {
@@ -18,6 +18,23 @@ export default function Dashboard() {
         setErr(e.message);
       }
     })();
+  }, []);
+
+  // live: session expiry → banner/stats refresh (F3)
+  useEffect(() => {
+    const es = openStream({
+      session_expired: () =>
+        api('/stats')
+          .then(setStats)
+          .catch(() => {}),
+      job_done: (d) => {
+        if (d.type === 'health')
+          api('/stats')
+            .then(setStats)
+            .catch(() => {});
+      },
+    });
+    return () => es.close();
   }, []);
 
   if (err) return <div className="warn-strip">⚠ {err}</div>;
