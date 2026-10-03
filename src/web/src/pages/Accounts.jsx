@@ -73,11 +73,11 @@ export default function Accounts() {
     });
 
   const removeMany = async () => {
-    if (!confirm(`Delete ${sel.size} account(s)? Sessions bhi delete honge.`)) return;
+    if (!confirm(`Delete karein ${sel.size} account(s)? Sessions bhi delete honge.`)) return;
     setBusy(true);
     try {
       await Promise.all([...sel].map((id) => api(`/accounts/${id}`, { method: 'DELETE' })));
-      toast(`Deleted ${sel.size} account(s)`, 'success');
+      toast(`${sel.size} account(s) delete ho gaye`, 'success');
       load();
     } catch (e) {
       toast(e.message, 'error');
@@ -87,10 +87,10 @@ export default function Accounts() {
   };
 
   const removeOne = async (id) => {
-    if (!confirm('Delete account + session?')) return;
+    if (!confirm('Account + session delete karein?')) return;
     try {
       await api(`/accounts/${id}`, { method: 'DELETE' });
-      toast('Account deleted', 'success');
+      toast('Account delete ho gaya', 'success');
       load();
     } catch (e) {
       toast(e.message, 'error');
@@ -101,7 +101,7 @@ export default function Accounts() {
     setBusy(true);
     try {
       const r = await api('/accounts/health', { method: 'POST', body: { ids: [...sel] } });
-      toast(`Health check queued (${r.queued})`, 'info');
+      toast(`Health check lag gaya (${r.queued})`, 'info');
       setTimeout(() => load().catch(() => {}), 3500);
     } catch (e) {
       toast(e.message, 'error');
@@ -113,7 +113,7 @@ export default function Accounts() {
   const openLogin = (a) =>
     setWizard({
       id: a.id,
-      name: a.label || a.identifier_masked,
+      name: a.label || a.identifier,
       mode: a.status === 'expired' || a.status === 'error' ? 'relogin' : 'login',
     });
 
@@ -135,7 +135,7 @@ export default function Accounts() {
         method: 'POST',
         body: { ids: [...sel], section_id: sid === '' ? null : Number(sid) },
       });
-      toast(`${r.updated} account(s) assigned`, 'success');
+      toast(`${r.updated} account(s) assign ho gaye`, 'success');
       load();
       loadSections();
     } catch (e) {
@@ -244,12 +244,12 @@ export default function Accounts() {
                       type="checkbox"
                       checked={sel.has(a.id)}
                       onChange={() => toggle(a.id)}
-                      aria-label={`Select ${a.label || a.identifier_masked}`}
+                      aria-label={`Select ${a.label || a.identifier}`}
                     />
                   </td>
                   <td data-label="Label">{a.label || <span className="muted">—</span>}</td>
                   <td data-label="Number" className="num">
-                    {a.identifier_masked}
+                    {a.identifier}
                   </td>
                   <td data-label="Section" className="small">
                     {a.section_name || <span className="muted">—</span>}
@@ -333,7 +333,7 @@ export default function Accounts() {
           onClose={() => setModal(null)}
           onSaved={() => {
             setModal(null);
-            toast('Account login ho gaya — session saved', 'success');
+            toast('Account login ho gaya — session save ho gaya', 'success');
             load();
           }}
         />
@@ -343,7 +343,10 @@ export default function Accounts() {
           onClose={() => setModal(null)}
           onSaved={(r) => {
             setModal(null);
-            toast(`Created ${r.created}, skipped ${r.skipped}`, r.skipped ? 'warn' : 'success');
+            toast(
+              `${r.created} import${r.activated ? ` (${r.activated} active, OTP nahi lagega)` : ''}, ${r.skipped} skip`,
+              r.skipped ? 'warn' : 'success'
+            );
             load();
           }}
         />
@@ -353,7 +356,7 @@ export default function Accounts() {
           onClose={() => setModal(null)}
           onSaved={(r) => {
             setModal(null);
-            toast(`Imported ${r.created}, skipped ${r.skipped}`, r.skipped ? 'warn' : 'success');
+            toast(`${r.created} import, ${r.skipped} skip`, r.skipped ? 'warn' : 'success');
             load();
           }}
         />
@@ -446,21 +449,24 @@ function OtpBoxes({ value, onChange, disabled }) {
   );
 }
 
-/** Step 2 — OTP enter + Verify (AddSingle aur Wizard dono use karte hain). */
-function OtpStep({ accountId, onSuccess, onBack }) {
+/** Step 2 — OTP enter + Verify (AddSingle aur Wizard dono use karte hain).
+ *  Firebase inbox configured ho toh auto-poll → auto-fill → auto-verify. */
+function OtpStep({ accountId, onSuccess, onBack, since = 0 }) {
   const [otp, setOtp] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [autoPoll, setAutoPoll] = useState(false);
 
-  const verify = async () => {
-    if (otp.replace(/\D/g, '').length !== 6) {
+  const verify = async (code) => {
+    const v = String(code ?? otp).replace(/\D/g, '');
+    if (v.length !== 6) {
       setErr('6 digit OTP bharo');
       return;
     }
     setBusy(true);
     setErr('');
     try {
-      await api(`/accounts/${accountId}/login`, { method: 'POST', body: { otp } });
+      await api(`/accounts/${accountId}/login`, { method: 'POST', body: { otp: v } });
       onSuccess();
     } catch (e) {
       setErr(e.message);
@@ -470,11 +476,55 @@ function OtpStep({ accountId, onSuccess, onBack }) {
     }
   };
 
+  // Firebase OTP inbox — poll har 4s (max ~90s); not_configured par band
+  useEffect(() => {
+    let stopped = false;
+    let tries = 0;
+    let timer;
+    setAutoPoll(true);
+    const poll = async () => {
+      if (stopped) return;
+      tries += 1;
+      if (tries > 22) {
+        setAutoPoll(false);
+        return;
+      }
+      try {
+        const r = await api(`/accounts/${accountId}/otp-fetch?since=${since || 0}`);
+        if (stopped) return;
+        if (r?.otp) {
+          setAutoPoll(false);
+          setOtp(r.otp);
+          verify(r.otp);
+          return;
+        }
+      } catch (e) {
+        if (stopped) return;
+        if (e.code === 'not_configured') {
+          setAutoPoll(false);
+          return;
+        }
+        // otp_not_found / rtdb_error → retry till timeout
+      }
+      timer = setTimeout(poll, 4000);
+    };
+    poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [accountId, since]);
+
   return (
     <div>
       <div className="hint" style={{ textAlign: 'center', marginBottom: 12 }}>
-        OTP aapke phone/email pe aaya — 6 digit yahan bharo (5 min me verify karo).
+        OTP aapke phone / email pe aaya — 6 digit yahan bharo (5 min me verify karo).
       </div>
+      {autoPoll && (
+        <div className="hint" style={{ textAlign: 'center', marginTop: -6, marginBottom: 8 }}>
+          📥 Firebase inbox se OTP dhoond rahe hain… (milte hi auto-verify)
+        </div>
+      )}
       <OtpBoxes value={otp} onChange={setOtp} disabled={busy} />
       {err && (
         <div className="error-text" style={{ textAlign: 'center' }}>
@@ -487,7 +537,7 @@ function OtpStep({ accountId, onSuccess, onBack }) {
             ← Back
           </Button>
         )}
-        <Button variant="primary" onClick={verify} disabled={busy}>
+        <Button variant="primary" onClick={() => verify()} disabled={busy}>
           {busy ? 'Verifying…' : 'Verify & Save'}
         </Button>
       </div>
@@ -500,11 +550,13 @@ function OtpWizard({ account, onClose, onDone }) {
   const [step, setStep] = useState(1); // 1 send · 2 otp · 3 done
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [since, setSince] = useState(0);
 
   const send = async () => {
     setBusy(true);
     setErr('');
     try {
+      setSince(Date.now()); // Firebase poll: isi time ke baad ke SMS
       await api(`/accounts/${account.id}/otp-request`, { method: 'POST' });
       setStep(2);
     } catch (e) {
@@ -539,7 +591,7 @@ function OtpWizard({ account, onClose, onDone }) {
       {step === 1 && (
         <div>
           <div className="hint" style={{ textAlign: 'center', marginBottom: 12 }}>
-            Flipkart pe OTP bhejenge — phir wahi number/email OTP dega.
+            Flipkart pe OTP bhejenge — phir wahi number / email OTP dega.
           </div>
           {err && <div className="error-text">{err}</div>}
           <div className="row" style={{ justifyContent: 'center' }}>
@@ -550,7 +602,12 @@ function OtpWizard({ account, onClose, onDone }) {
         </div>
       )}
       {step === 2 && (
-        <OtpStep accountId={account.id} onSuccess={success} onBack={() => setStep(1)} />
+        <OtpStep
+          accountId={account.id}
+          onSuccess={success}
+          onBack={() => setStep(1)}
+          since={since}
+        />
       )}
       {step === 3 && (
         <div style={{ textAlign: 'center', padding: '10px 0' }}>
@@ -570,6 +627,7 @@ function AddSingle({ onClose, onSaved }) {
   const [step, setStep] = useState(1); // 1 form · 2 otp · 3 done
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [since, setSince] = useState(0);
 
   const start = async () => {
     setBusy(true);
@@ -593,6 +651,7 @@ function AddSingle({ onClose, onSaved }) {
         }
         setCreated({ id });
       }
+      setSince(Date.now()); // Firebase poll: isi time ke baad ke SMS
       await api(`/accounts/${id}/otp-request`, { method: 'POST' });
       setStep(2);
     } catch (e) {
@@ -610,7 +669,7 @@ function AddSingle({ onClose, onSaved }) {
   if (step === 2) {
     return (
       <Modal title={`Verify OTP — ${label || identifier}`} onClose={onClose}>
-        <OtpStep accountId={created.id} onSuccess={success} onBack={() => setStep(1)} />
+        <OtpStep accountId={created.id} onSuccess={success} onBack={() => setStep(1)} since={since} />
       </Modal>
     );
   }
@@ -650,7 +709,7 @@ function AddSingle({ onClose, onSaved }) {
           autoFocus
         />
         <div className="hint">
-          OTP aapke number/email pe aayega — wahi 6 digit next step me bharoge.
+          OTP aapke number / email pe aayega — wahi 6 digit next step me bharoge.
         </div>
       </div>
       <div className="field">
@@ -795,7 +854,8 @@ function ImportJson({ onClose, onSaved }) {
         <input className="input" type="file" accept=".json,application/json" onChange={onFile} />
         <div className="hint">
           Flexible fields — phone/mobile/phone_number/number/email (identifier), label/username/name
-          (label). Tokens &amp; session data ignore hote hain.
+          (label). Token wale exports (access_token ke saath) seedha <b>active</b> import honge —
+          OTP nahi lagega.
         </div>
       </div>
       <div className="field">

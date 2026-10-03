@@ -31,7 +31,7 @@ export default function Orders() {
   useEffect(() => {
     const es = openStream({
       captcha_pending: () => {
-        toast('CAPTCHA solve karo â€” order pending hai', 'warn');
+        toast('CAPTCHA solve karo — order pending hai', 'warn');
         load().catch(() => {});
       },
       order_placed: () => load().catch(() => {}),
@@ -46,7 +46,7 @@ export default function Orders() {
     setBusy(true);
     try {
       await api(`/orders/${orderId}/captcha`, { method: 'POST', body: { text } });
-      toast('Captcha bheja â€” order flow dobara chalega', 'success');
+      toast('Captcha bheja — order flow dobara chalega', 'success');
       setCaptcha(null);
       setTab('pending');
       setTimeout(() => load().catch(() => {}), 2500);
@@ -60,8 +60,8 @@ export default function Orders() {
   const retry = async (orderId) => {
     setBusy(true);
     try {
-      await api(`/orders/${orderId}/retry`, { method: 'POST' });
-      toast('Retry queued', 'success');
+      const r = await api(`/orders/${orderId}/retry`, { method: 'POST' });
+      toast(r?.step === 'price_check' ? 'Re-quote queued (price check)' : 'Retry queued', 'success');
       load();
     } catch (e) {
       toast(e.message, 'error');
@@ -74,7 +74,7 @@ export default function Orders() {
     <div>
       <div className="page-head">
         <h1>Orders</h1>
-        <p>Hybrid checkout â€” auto flow + CAPTCHA manual queue. COD only.</p>
+        <p>Hybrid checkout — auto flow + CAPTCHA manual queue. COD only.</p>
       </div>
 
       <div className="tabs" role="tablist">
@@ -94,12 +94,12 @@ export default function Orders() {
         <Skeleton h={160} />
       ) : items.length === 0 ? (
         <EmptyState
-          icon="ðŸ›’"
-          title={`${TABS.find((t) => t.key === tab)?.label} â€” koi order nahi`}
-          hint="Booking wizard se quote karo â†’ confirm karke orders yahan track honge."
+          icon="🛒"
+          title={`${TABS.find((t) => t.key === tab)?.label} — koi order nahi`}
+          hint="Fetch page par link paste karke quote karo → Book karke orders yahan track honge."
           action={
-            <Link to="/booking">
-              <button className="btn primary sm">Go to Book</button>
+            <Link to="/fetch">
+              <button className="btn primary sm">Go to Fetch &amp; Order</button>
             </Link>
           }
         />
@@ -121,15 +121,15 @@ export default function Orders() {
               {items.map((o) => (
                 <tr key={o.id}>
                   <td data-label="Account">
-                    {o.account_label || o.account_masked}
-                    <div className="small muted">{o.account_masked}</div>
+                    {o.account_label || o.identifier || o.account_masked}
+                    <div className="small muted">{o.identifier || o.account_masked}</div>
                   </td>
                   <td data-label="Product" className="small">
-                    {(o.product_title || 'â€”').slice(0, 48)}
+                    {(o.product_title || '—').slice(0, 48)}
                     <div className="muted">booking #{o.booking_id}</div>
                   </td>
                   <td data-label="Price" className="num">
-                    {o.price != null ? inr(o.price) : 'â€”'}
+                    {o.price != null ? inr(o.price) : '—'}
                   </td>
                   <td data-label="State">
                     <Pill status={o.captcha_state} />
@@ -140,7 +140,7 @@ export default function Orders() {
                     ) : o.error ? (
                       <span title={o.error}>{String(o.error).slice(0, 46)}</span>
                     ) : (
-                      'â€”'
+                      '—'
                     )}
                   </td>
                   <td data-label="Updated" className="muted small">
@@ -153,11 +153,13 @@ export default function Orders() {
                           Solve
                         </Button>
                       )}
-                      {o.captcha_state === 'failed' && o.price != null && (
-                        <Button size="sm" variant="outline" onClick={() => retry(o.id)} disabled={busy}>
-                          Retry
-                        </Button>
-                      )}
+                      {o.error &&
+                        o.captcha_state !== 'pending' &&
+                        o.captcha_state !== 'placed' && (
+                          <Button size="sm" variant="outline" onClick={() => retry(o.id)} disabled={busy}>
+                            {o.price == null ? 'Re-quote' : 'Retry'}
+                          </Button>
+                        )}
                     </div>
                   </td>
                 </tr>
@@ -179,13 +181,13 @@ export default function Orders() {
   );
 }
 
-/** CAPTCHA manual solve â€” image dikhao, text bharo, flow resume. */
+/** CAPTCHA manual solve — image dikhao, text bharo, flow resume. */
 function CaptchaModal({ order, busy, onClose, onSolve }) {
   const [text, setText] = useState('');
 
   return (
     <Modal
-      title={`CAPTCHA â€” order #${order.id}`}
+      title={`CAPTCHA — order #${order.id}`}
       onClose={onClose}
       actions={
         <>
@@ -197,7 +199,7 @@ function CaptchaModal({ order, busy, onClose, onSolve }) {
             onClick={() => onSolve(text.trim())}
             disabled={busy || text.trim().length < 3}
           >
-            {busy ? 'Sendingâ€¦' : 'Submit & Continue'}
+            {busy ? 'Sending…' : 'Submit & Continue'}
           </Button>
         </>
       }
@@ -221,7 +223,7 @@ function CaptchaModal({ order, busy, onClose, onSolve }) {
           style={{ textAlign: 'center', fontSize: 20, letterSpacing: 4, fontWeight: 700 }}
         />
         <div className="hint">
-          Submit karke order flow wahin se continue hoga (address â†’ COD â†’ place).
+          Submit karke order flow wahin se continue hoga (address → COD → place).
         </div>
       </div>
     </Modal>

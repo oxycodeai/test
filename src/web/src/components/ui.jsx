@@ -25,9 +25,12 @@ const PILL_TONES = {
   pending: 'yellow',
   running: 'yellow',
   queued: 'yellow',
+  quoting: 'yellow',
+  quoted: 'blue',
   auto: 'gray',
   solved: 'yellow',
   ok: 'green',
+  done: 'green',
   cancelled: 'gray',
 };
 

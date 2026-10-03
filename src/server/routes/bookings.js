@@ -37,6 +37,7 @@ function shapeOrder(row) {
     booking_id: row.booking_id,
     account_id: row.account_id,
     account_label: row.account_label || null,
+    identifier: row.account_identifier || null,
     account_masked: row.account_masked || null,
     qty: row.qty,
     price: row.price,
@@ -242,6 +243,66 @@ r.post(
       .map((x) => x.id);
     for (const oid of ids) enqueue('order', oid);
     res.json(await fetchDetail(id));
+  })
+);
+
+// Requote — failed/stuck quote booking wapas quoting me + price-NULL orders dobara quote
+r.post(
+  '/:id/requote',
+  h(async (req, res) => {
+    const id = Number(req.params.id);
+    const db = getDb();
+    const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+    if (!booking) {
+      return res.status(404).json({ error: { code: 'not_found', message: 'No such booking' } });
+    }
+    if (!['quoting', 'quoted', 'failed'].includes(booking.status)) {
+      return res.status(409).json({
+        error: {
+          code: 'invalid_state',
+          message: `Booking status "${booking.status}" — requote sirf quote-stage (quoting/quoted/failed) me ho sakta hai`,
+        },
+      });
+    }
+    const need = db
+      .prepare(
+        `SELECT COUNT(*) n FROM orders
+         WHERE booking_id = ? AND price IS NULL AND captcha_state = 'auto'`
+      )
+      .get(id).n;
+    if (need === 0 && booking.status === 'failed') {
+      // running-stage failed (sab quote ready, orders fail hue) → order retry path
+      return res.status(409).json({
+        error: {
+          code: 'nothing_to_requote',
+          message: 'Koi pending quote nahi — Orders page se Retry karo',
+        },
+      });
+    }
+    const t = now();
+    const runnable = db
+      .prepare(
+        `SELECT o.id FROM orders o
+         WHERE o.booking_id = ? AND o.price IS NULL AND o.captcha_state = 'auto'
+           AND NOT EXISTS (
+             SELECT 1 FROM jobs j WHERE j.type = 'price_check' AND j.ref_id = o.id
+               AND j.status IN ('queued','running')
+           )`
+      )
+      .all(id);
+    if (need > 0) {
+      const run = db.transaction(() => {
+        db.prepare(
+          `UPDATE orders SET error = NULL, updated_at = ? WHERE booking_id = ? AND price IS NULL AND captcha_state = 'auto'`
+        ).run(t, id);
+        db.prepare(
+          `UPDATE bookings SET status = 'quoting', updated_at = ? WHERE id = ? AND status IN ('quoted','failed')`
+        ).run(t, id);
+      });
+      run();
+    }
+    for (const o of runnable) enqueue('price_check', o.id);
+    res.json({ ...(await fetchDetail(id)), requeued: runnable.length });
   })
 );
 

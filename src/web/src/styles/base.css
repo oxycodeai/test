@@ -164,9 +164,18 @@ h2 {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
   font-weight: 500;
+  min-width: 0;
+  padding: 0 2px;
+  text-align: center;
+}
+.bottom-nav a span:not(.ico) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .bottom-nav a.active {
   color: var(--primary);

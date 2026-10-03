@@ -50,7 +50,8 @@ try {
   await page.fill('input[placeholder*="981234"], input[placeholder*="mail"]', '9998887776');
   await page.fill('input[placeholder="Shop-05"]', 'E2E-Acc');
   await page.click('.modal button.primary');
-  await page.waitForSelector('text=E2E-Acc', { timeout: 5000 });
+  // OTP request browser-path chalta hai — blocked IP par ~15s me honest error aata hai
+  await page.waitForSelector('text=E2E-Acc', { timeout: 40000 });
   console.log('✔ account added (masked row visible)');
   await shot(page, 'accounts');
 

@@ -102,6 +102,50 @@ export function hasSession(accountId) {
   return fs.existsSync(fileFor(accountId));
 }
 
+/** JWT access_token ka exp (ms) — invalid token → null. */
+export function tokenExpiry(state) {
+  try {
+    const p = JSON.parse(
+      Buffer.from(String(state.access_token).split('.')[1], 'base64url').toString('utf8')
+    );
+    return p.exp ? p.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Browser ke liye storageState — token session se cookie state banao
+ * (auth='token' wale sessions me sirf JWT hota hai, cookies nahi).
+ * Cookie sessions ke liye same object wapas.
+ */
+export function toStorageState(raw) {
+  if (!raw || raw.auth !== 'token') return raw;
+  const cookies = [];
+  if (raw.access_token) {
+    cookies.push({
+      name: 'flkart',
+      value: String(raw.access_token),
+      domain: '.flipkart.com',
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'None',
+    });
+  }
+  if (raw.device_id) {
+    cookies.push({
+      name: 'device_id',
+      value: String(raw.device_id),
+      domain: '.flipkart.com',
+      path: '/',
+      secure: true,
+      sameSite: 'None',
+    });
+  }
+  return { cookies, origins: [] };
+}
+
 /** File + DB row dono hatao (account delete par). */
 export function deleteSession(accountId) {
   try {

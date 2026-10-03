@@ -264,19 +264,12 @@ Dev mode: step 1 response me debugOtp field (Flipkart page se intercept kiya hua
 | POST   | `/orders/:id/captcha` | `{text}`                | `{status:'placed' \| 'failed'}`                   |
 | POST   | `/orders/:id/retry`   | —                       | `{ok}`                                            |
 
-### Commission
-
-| Method | Path                              | Response                              |
-| ------ | --------------------------------- | ------------------------------------- |
-| POST   | `/commission/sync`                | `{synced:n}`                          |
-| GET    | `/commission?period=today\|month` | `{total, pending, approved, items[]}` |
-
 ### Stream / System
 
 | Method | Path      | Response                                                   |
 | ------ | --------- | ---------------------------------------------------------- |
 | GET    | `/stream` | SSE — toasts: session_expired, order_placed, job_done      |
-| GET    | `/stats`  | `{active_accs, pending_jobs, today_orders, month_earning}` |
+| GET    | `/stats`  | `{active_accs, total_accs, pending_jobs, today_orders}`    |
 
 ## 6. Job Queue & Concurrency
 

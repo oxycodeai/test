@@ -9,7 +9,6 @@ import systemRoutes, { healthHandler } from './routes/system.js';
 import streamRoutes from './routes/stream.js';
 import accountRoutes from './routes/accounts.js';
 import productRoutes from './routes/products.js';
-import commissionRoutes from './routes/commission.js';
 import sectionRoutes from './routes/sections.js';
 import addressRoutes from './routes/addresses.js';
 import bookingRoutes from './routes/bookings.js';
@@ -31,7 +30,6 @@ export function createApp() {
   app.use('/api', streamRoutes);
   app.use('/api/accounts', accountRoutes);
   app.use('/api/products', productRoutes);
-  app.use('/api/commission', commissionRoutes);
   app.use('/api/sections', sectionRoutes);
   app.use('/api/addresses', addressRoutes);
   app.use('/api/bookings', bookingRoutes);

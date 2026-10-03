@@ -68,21 +68,17 @@ export default function Dashboard() {
         <StatCard label="Active Accounts" value={`${stats.active_accs}/${stats.total_accs}`} />
         <StatCard label="Today's Orders" value={stats.today_orders} />
         <StatCard label="Pending Jobs" value={stats.pending_jobs} />
-        <StatCard label="Month Earning" value={inr(stats.month_earning)} accent />
       </div>
 
       <div className="quick-actions">
         <Link className="quick" to="/fetch">
           <span className="q-ico">🔍</span> Fetch Product
         </Link>
-        <Link className="quick" to="/scan">
-          <span className="q-ico">📡</span> Start Scan
+        <Link className="quick" to="/orders">
+          <span className="q-ico">📋</span> Orders
         </Link>
         <Link className="quick" to="/accounts">
           <span className="q-ico">👤</span> Add Accounts
-        </Link>
-        <Link className="quick" to="/commission">
-          <span className="q-ico">₹</span> Commission
         </Link>
       </div>
 
@@ -99,7 +95,7 @@ export default function Dashboard() {
           <EmptyState
             icon="🏷"
             title="No products yet"
-            hint="Affiliate link paste karke real price/offers fetch karo."
+            hint="Affiliate link paste karke real price / offers fetch karo."
             action={
               <Link to="/fetch">
                 <button className="btn primary sm">Fetch Product</button>

@@ -4,7 +4,8 @@ import { getDb } from '../../db/index.js';
 import { now, maskIdentifier } from '../../shared/constants.js';
 import { enqueue, waitForJob } from '../../worker/queue.js';
 import { assertLoginRate, setPendingOtp, latestRequestId } from '../../worker/otp-store.js';
-import { deleteSession } from '../services/sessionStore.js';
+import { deleteSession, saveSession } from '../services/sessionStore.js';
+import { isConfigured as otpInboxReady, fetchLatestOtp } from '../services/otpInbox.js';
 
 const r = Router();
 
@@ -18,6 +19,7 @@ function shape(row) {
   return {
     id: row.id,
     label: row.label,
+    identifier: row.identifier,
     identifier_masked: maskIdentifier(row.identifier),
     status: row.status,
     section_id: row.section_id ?? null,
@@ -112,6 +114,7 @@ r.post(
     );
     let created = 0;
     let skipped = 0;
+    let activated = 0;
     const run = db.transaction(() => {
       for (const it of items) {
         const rec = typeof it === 'string' ? { identifier: it } : it || {};
@@ -130,17 +133,36 @@ r.post(
           continue;
         }
         const t = now();
-        insert.run(
+        const info = insert.run(
           (rec.label || rec.username || rec.name || '').trim() || null,
           id,
           t,
           t
         );
+        const newId = Number(info.lastInsertRowid);
+        // Token JSON (access_token) → session save + active (bina OTP)
+        const tok = rec.session || (rec.access_token ? rec : null);
+        if (tok && tok.access_token) {
+          saveSession(newId, {
+            auth: 'token',
+            access_token: String(tok.access_token),
+            refresh_token: tok.refresh_token ? String(tok.refresh_token) : null,
+            user_id: tok.user_id ?? null,
+            username: tok.username || rec.username || null,
+            device_id: tok.device_id || null,
+            device_uid: tok.device_uid || null,
+            user_agent: tok.user_agent || null,
+          });
+          db.prepare(
+            `UPDATE accounts SET status = 'active', last_checked = ?, last_error = NULL, updated_at = ? WHERE id = ?`
+          ).run(t, t, newId);
+          activated++;
+        }
         created++;
       }
     });
     run();
-    res.json({ created, skipped, total: items.length });
+    res.json({ created, skipped, total: items.length, activated });
   })
 );
 
@@ -250,6 +272,39 @@ r.post(
       accountId,
       status: 'active',
     });
+  })
+);
+
+// Firebase OTP inbox (auto-login) — since=otp-request ke baad ke messages
+r.get(
+  '/:id/otp-fetch',
+  h(async (req, res) => {
+    const accountId = Number(req.params.id);
+    const acc = getDb().prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+    if (!acc) {
+      return res.status(404).json({ error: { code: 'not_found', message: 'No such account' } });
+    }
+    if (!otpInboxReady()) {
+      return res.status(501).json({
+        error: { code: 'not_configured', message: 'FIREBASE_DB_URL set nahi (.env) — manual OTP bharo' },
+      });
+    }
+    // since = otp-request click ka time (client) — miss ho toh sirf last 20s
+    const since = Number(req.query.since) || Date.now() - 20000;
+    let out;
+    try {
+      out = await fetchLatestOtp(acc.identifier, since);
+    } catch (e) {
+      return res.status(502).json({ error: { code: 'rtdb_error', message: e.message } });
+    }
+    if (!out.found) {
+      const msg =
+        out.reason === 'no_device'
+          ? 'Firebase me koi device/SMS nahi mila — panel check karo (ya manual OTP bharo)'
+          : 'OTP abhi nahi aaya — thodi der me dobara (ya manual)';
+      return res.status(404).json({ error: { code: 'otp_not_found', message: msg } });
+    }
+    res.json({ ok: true, otp: out.otp, at: out.at });
   })
 );
 

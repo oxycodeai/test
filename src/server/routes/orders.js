@@ -23,6 +23,7 @@ function shape(row) {
     booking_status: row.booking_status,
     account_id: row.account_id,
     account_label: row.account_label,
+    identifier: row.account_identifier || null,
     account_masked: maskIdentifier(row.account_identifier),
     product_title: row.product_title,
     qty: row.qty,
@@ -90,7 +91,7 @@ r.post(
   })
 );
 
-// Retry failed order
+// Retry failed order — price NULL ho to pehle price_check, warna order flow
 r.post(
   '/:id/retry',
   h(async (req, res) => {
@@ -104,13 +105,21 @@ r.post(
       return res.status(409).json({ error: { code: 'invalid_state', message: 'Order already placed' } });
     }
     if (order.price == null) {
-      return res.status(409).json({ error: { code: 'no_price', message: 'Price quote nahi hua — retry price_check' } });
+      // quote fail tha — price_check dobara chalao; booking failed hai to wapas quoting
+      db.prepare(`UPDATE orders SET error = NULL, updated_at = ? WHERE id = ?`).run(now(), id);
+      if (order.booking_id) {
+        db.prepare(
+          `UPDATE bookings SET status = 'quoting', updated_at = ? WHERE id = ? AND status = 'failed'`
+        ).run(now(), order.booking_id);
+      }
+      enqueue('price_check', id);
+      return res.json({ ok: true, step: 'price_check' });
     }
     db.prepare(
       `UPDATE orders SET error = NULL, captcha_state = 'auto', updated_at = ? WHERE id = ?`
     ).run(now(), id);
     enqueue('order', id);
-    res.json({ ok: true });
+    res.json({ ok: true, step: 'order' });
   })
 );
 

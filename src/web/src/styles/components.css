@@ -288,6 +288,7 @@ table.table {
   /* card-list conversion: labels ke saath */
   table.responsive,
   table.responsive tbody,
+  table.responsive tfoot,
   table.responsive tr,
   table.responsive td {
     display: block;
@@ -366,6 +367,13 @@ table.table {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   flex-shrink: 0;
+}
+.product-card .thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  opacity: 0.75;
 }
 @media (min-width: 768px) {
   .product-card .thumb {
@@ -501,6 +509,7 @@ table.table {
   width: 100%;
   max-width: 480px;
   max-height: 88vh;
+  max-height: 88dvh;
   overflow-y: auto;
   padding: 18px;
 }
@@ -562,6 +571,7 @@ table.table {
 /* ── Auth screen ───────────────────────────────────── */
 .auth-screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   background: linear-gradient(160deg, var(--primary-soft), var(--bg-alt) 60%);
@@ -651,6 +661,7 @@ table.table {
 /* auth gate spinner */
 .center-screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   color: var(--text-muted);

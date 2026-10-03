@@ -62,7 +62,7 @@ Breakpoints: `--bp-sm: 640px`, `--bp-md: 768px`, `--bp-lg: 1024px`
 ### 3.1 Dashboard (`/`)
 
 - 4 stat cards: Active Accounts | Today's Orders | Pending Jobs | Month Earning (₹, yellow accent on earning)
-- Quick actions row: **Fetch Product** (yellow), Start Scan, Add Accounts, Sync Commission
+- Quick actions row: **Fetch Product** (yellow), Orders, Add Accounts
 - Recent activity list (last 10 events)
 - Health banner (red) jab koi session expired
 
@@ -108,12 +108,10 @@ Breakpoints: `--bp-sm: 640px`, `--bp-md: 768px`, `--bp-lg: 1024px`
 - Failed: error reason + **Retry**
 - Bulk: "Solve all via auto" reruns OCR pass
 
-### 3.7 Commission (`/commission`)
+### 3.7 Commission — ❌ REMOVED (2026-10-03)
 
-- Period toggle: Today | 7 days | Month
-- 3 cards: Total ₹ | Pending ₹ | Approved ₹ (yellow accent on Total)
-- Table: date, product, amount, status pill (pending yellow / approved green / paid blue / reversed red)
-- **Sync** button → "Synced n new"
+- `/commission` page + nav + Month-Earning card hata diya gaya (user decision).
+- Earnings ab affiliate network ki site pe (EarnKaro/CashKaro/Cuelinks dashboard).
 
 ### 3.8 Settings (`/settings`)
 

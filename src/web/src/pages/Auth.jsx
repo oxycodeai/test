@@ -12,8 +12,8 @@ export default function AuthPage({ setup, onDone }) {
   const submit = async (e) => {
     e.preventDefault();
     setErr('');
-    if (setup && pin !== pin2) return setErr('PINs do not match');
-    if (pin.length < 4) return setErr('PIN must be at least 4 characters');
+    if (setup && pin !== pin2) return setErr('PINs match nahi kar rahe');
+    if (pin.length < 4) return setErr('PIN kam se kam 4 characters ka hona chahiye');
     setBusy(true);
     try {
       const r = await api(setup ? '/auth/setup' : '/auth/login', {

@@ -6,7 +6,7 @@ export default [
   { ignores: ['node_modules/', 'src/web/dist/', 'data/', 'sessions/', 'logs/'] },
   js.configs.recommended,
   {
-    files: ['**/*.js', '**/*.jsx'],
+    files: ['**/*.js', '**/*.jsx', '**/*.mjs'],
     plugins: { react },
     languageOptions: {
       ecmaVersion: 2022,

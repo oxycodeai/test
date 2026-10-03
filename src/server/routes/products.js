@@ -32,18 +32,19 @@ r.get(
 r.post(
   '/fetch',
   h(async (req, res) => {
-    const { url } = req.body || {};
+    const url = String(req.body?.url || '').trim();
     if (!url || !isSupportedAffiliateUrl(url)) {
       return res.status(400).json({
         error: {
           code: 'invalid_url',
-          message: 'Valid Flipkart / CashKaro / EarnKaro product link required',
+          message:
+            'Valid http(s) link do — Flipkart / CashKaro / EarnKaro / koi bhi affiliate link chalega',
         },
       });
     }
     const db = getDb();
 
-    // CashKaro/EarnKaro hop → final Flipkart product URL (flipkart pe no-op)
+    // Network/short link → final Flipkart product URL (direct flipkart pe no-op)
     const resolved = await resolveAffiliateUrl(url);
     const canonical = resolved.url;
 
@@ -55,11 +56,11 @@ r.post(
       return res.json({ ...shape(cached), cached: true, affiliate: { mode: 'cache' } });
     }
 
-    // affiliate convert — sirf direct flipkart links (CK/EK already affiliate)
-    const aff =
-      resolved.platform === 'flipkart'
-        ? await convertLink(canonical)
-        : { url: resolved.affiliateUrl, mode: resolved.platform, converted: false, native: true };
+    // affiliate: user ki original network link rakh (checkout me wahi attribution degi);
+    // direct flipkart link ho to Cuelinks se convert.
+    const aff = resolved.affiliateUrl
+      ? { url: resolved.affiliateUrl, mode: resolved.platform, native: true, converted: false }
+      : await convertLink(canonical);
 
     // real product data
     const data = await fetchProductPage(canonical);

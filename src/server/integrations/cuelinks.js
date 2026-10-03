@@ -47,12 +47,3 @@ export async function convertLink(originalUrl) {
   }
 }
 
-/** Phase 4 — commission transactions sync. */
-export async function listTransactions({ from, to, status } = {}) {
-  const q = new URLSearchParams();
-  if (from) q.set('from', from);
-  if (to) q.set('to', to);
-  if (status) q.set('status', status);
-  const data = await call('GET', `/pub_api/v3/transactions?${q}`);
-  return data?.data?.transactions || data?.transactions || data?.data || [];
-}

@@ -1,17 +1,15 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
 const NAV = [
-  { to: '/', label: 'Dashboard', ico: '▦' },
-  { to: '/fetch', label: 'Fetch', ico: '🔍' },
-  { to: '/accounts', label: 'Accounts', ico: '👤' },
-  { to: '/booking', label: 'Book', ico: '📡' },
-  { to: '/orders', label: 'Orders', ico: '🛒' },
-  { to: '/commission', label: 'Commission', ico: '₹' },
-  { to: '/settings', label: 'Settings', ico: '⚙' },
+  { to: '/', label: 'Dashboard', short: 'Home', ico: '▦' },
+  { to: '/fetch', label: 'Fetch & Order', short: 'Fetch', ico: '🔍' },
+  { to: '/accounts', label: 'Accounts', short: 'Accounts', ico: '👤' },
+  { to: '/orders', label: 'Orders', short: 'Orders', ico: '🛒' },
+  { to: '/settings', label: 'Settings', short: 'Settings', ico: '⚙' },
 ];
 
-// phone: 5 primary tabs (dashboard, fetch, booking, orders, more→accounts)
-const BOTTOM = ['/', '/fetch', '/booking', '/orders', '/accounts'];
+// phone: poori 5 tabs (short labels) — Settings bhi accessible
+const BOTTOM = NAV;
 
 export default function Layout({ onLogout }) {
   return (
@@ -40,10 +38,10 @@ export default function Layout({ onLogout }) {
       </div>
 
       <nav className="bottom-nav" aria-label="Primary mobile">
-        {NAV.filter((n) => BOTTOM.includes(n.to)).map((n) => (
+        {BOTTOM.map((n) => (
           <NavLink key={n.to} to={n.to} end={n.to === '/'}>
             <span className="ico">{n.ico}</span>
-            {n.label}
+            {n.short}
           </NavLink>
         ))}
       </nav>

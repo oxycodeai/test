@@ -23,7 +23,13 @@ import {
   waitLoggedIn,
 } from '../shared/flipkart-login.js';
 import { isLoggedIn } from '../shared/flipkart-auth.js';
-import { saveSession, loadSession, hasSession } from '../server/services/sessionStore.js';
+import {
+  saveSession,
+  loadSession,
+  hasSession,
+  toStorageState,
+  tokenExpiry,
+} from '../server/services/sessionStore.js';
 import { fetchProductWithSession } from '../server/services/pageFetch.js';
 import { refreshBooking } from '../server/services/bookingStore.js';
 import { sendEvent } from '../server/routes/stream.js';
@@ -141,6 +147,27 @@ registerHandler('health', async (job) => {
     return;
   }
 
+  // Token session (imported, bina OTP) — browser ki jagah JWT exp check
+  if (state.auth === 'token') {
+    const exp = tokenExpiry(state);
+    const t = now();
+    if (exp && exp > t) {
+      getDb()
+        .prepare(
+          `UPDATE accounts SET status = 'active', last_checked = ?, last_error = NULL, updated_at = ? WHERE id = ?`
+        )
+        .run(t, t, accountId);
+    } else {
+      getDb()
+        .prepare(
+          `UPDATE accounts SET status = 'expired', last_checked = ?, last_error = ?, updated_at = ? WHERE id = ?`
+        )
+        .run(t, 'Access token expire ho gaya — naye token wala JSON dobara import karo', t, accountId);
+      sendEvent('session_expired', { accountId, label: acc.label || null });
+    }
+    return;
+  }
+
   await sleep(jitter()); // batch spacing (2-5s)
   const browser = await getBrowser();
   const context = await browser.newContext({
@@ -209,7 +236,7 @@ registerHandler('price_check', async (job) => {
 
   await sleep(jitter());
   try {
-    const data = await fetchProductWithSession(state, order.booking_url);
+    const data = await fetchProductWithSession(toStorageState(state), order.booking_url);
     if (!data.price) {
       failQuote('Price extract nahi hua');
       throw new LoginError('price extract failed', 422);
@@ -265,8 +292,25 @@ registerHandler('order', async (job) => {
     refreshBooking(ctx.bid);
   };
 
+  // Checkout ke beech login par redirect → session dead (token-cookie ya expire)
+  const sessionExpired = () => {
+    const t = now();
+    db.prepare(
+      `UPDATE accounts SET status = 'expired', last_error = ?, updated_at = ? WHERE id = ?`
+    ).run('Checkout login par redirect — OTP login dobara karo', t, acc.id);
+    sendEvent('session_expired', { accountId: acc.id, label: acc.label || null });
+    return new LoginError(
+      'Session expired — OTP login dobara karo (checkout login page par redirect)',
+      410
+    );
+  };
+
   const browser = await getBrowser();
-  const pageCtx = await browser.newContext({ storageState: state, userAgent: LOGIN_UA, locale: 'en-IN' });
+  const pageCtx = await browser.newContext({
+    storageState: toStorageState(state),
+    userAgent: LOGIN_UA,
+    locale: 'en-IN',
+  });
   const page = await pageCtx.newPage();
   try {
     await sleep(jitter());
@@ -300,6 +344,7 @@ registerHandler('order', async (job) => {
     await buyBtn.first().click({ timeout: 15000 });
     await page.waitForLoadState('domcontentloaded').catch(() => {});
     await page.waitForTimeout(2500);
+    if (/\/account\/login/.test(page.url())) throw sessionExpired();
 
     // 3. address — sirf hamara saved address (match name+phone+pincode), add agar missing
     const addrText = `${address.name} ${address.phone} ${address.pincode}`;
@@ -344,6 +389,7 @@ registerHandler('order', async (job) => {
       }
     }
     void addrText;
+    if (/\/account\/login/.test(page.url())) throw sessionExpired();
 
     // 4. payment — COD only
     const cod = page.getByText(CHECKOUT.codText, { exact: false }).first();

@@ -3,9 +3,15 @@
 import { getBrowser } from '../../worker/platform.js';
 import { PRODUCT, deepGet, parsePrice } from '../../shared/selectors.js';
 import { config } from '../../shared/constants.js';
+import { ffFetch, getProxyUrl } from './net.js';
 
 const UA =
   'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36';
+
+// Block wala honest error — proxy na set ho to fix ka hint bhi.
+const blockMsg = () =>
+  'Flipkart blocked/throttled this request — try again after a minute' +
+  (getProxyUrl() ? '' : ' · Settings → Proxy lagao (IP block ka sure fix)');
 
 // ── in-page extraction (browser path) ───────────────────────
 // NOTE: real function pass karo page.evaluate ko (string expression evaluate hokar
@@ -125,6 +131,50 @@ function extractFromHtml(html, url) {
   });
 }
 
+// Flipkart CDN image URLs me {/@width}/{/@height} jaise template placeholders aate hain
+// (rukminim2.flixcart.com/image/{@width}/{@height}/...) — inhe real size se bhar do.
+function sanitizeImageUrl(u) {
+  if (!u) return null;
+  let s = String(u).trim();
+  if (s.startsWith('//')) s = `https:${s}`;
+  s = s
+    .replace(/\{@?width\}/gi, '400')
+    .replace(/\{@?height\}/gi, '400')
+    .replace(/\{@?w\}/gi, '400')
+    .replace(/\{@?h\}/gi, '400');
+  if (/\{|\}/.test(s)) return null; // abhi bhi template hai → render nahi hoga
+  try {
+    const p = new URL(s);
+    if (p.protocol !== 'http:' && p.protocol !== 'https:') return null;
+    return s;
+  } catch {
+    return null;
+  }
+}
+
+// "{TITLE} - Price in India…" jaise unsubstituted templates ko real title nahi maana
+const isTemplateText = (t) => /\{\s*(title|name|product)\s*\}/i.test(String(t || ''));
+const cleanTitle = (t) => (isTemplateText(t) ? null : t || null);
+
+// Fallback: URL ke product-slug se title banao
+// (/himalaya-neem-face-wash/p/itm… → "Himalaya Neem Face Wash")
+function titleFromUrl(u) {
+  try {
+    const p = new URL(String(u));
+    const segs = p.pathname.split('/').filter(Boolean);
+    const i = segs.indexOf('p');
+    if (i <= 0) return null;
+    const words = segs[i - 1].replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!words || words.length < 4) return null;
+    return words
+      .split(' ')
+      .map((w) => (w.length > 2 ? w[0].toUpperCase() + w.slice(1) : w))
+      .join(' ');
+  } catch {
+    return null;
+  }
+}
+
 // ── normalize → product shape ───────────────────────────────
 function flatten(node, out = []) {
   if (!node || typeof node !== 'object') return out;
@@ -140,6 +190,9 @@ function flatten(node, out = []) {
   return out;
 }
 
+// junk/block page pe bodyText se absurd number aa sakta hai (5.6e56) — kabhi price nahi
+const sane = (n) => (typeof n === 'number' && Number.isFinite(n) && n > 0 && n < 1e7 ? n : null);
+
 export function normalize(raw) {
   const nodes = flatten(raw.ld || []);
   const prod =
@@ -154,8 +207,8 @@ export function normalize(raw) {
   const nextPrice = parsePrice(deepGet(raw.next, PRODUCT.paths.price));
   const nextMrp = parsePrice(deepGet(raw.next, PRODUCT.paths.mrp));
 
-  const price = ldPrice ?? nextPrice ?? parsePrice(raw.bigPrice) ?? parsePrice(raw.bodyText);
-  const mrp = nextMrp ?? parsePrice(raw.strikeMrp);
+  const price = sane(ldPrice ?? nextPrice ?? parsePrice(raw.bigPrice) ?? parsePrice(raw.bodyText));
+  const mrp = sane(nextMrp ?? parsePrice(raw.strikeMrp));
   const availability = String(offersLd[0]?.availability || '');
   const inStock = availability
     ? /instock/i.test(availability)
@@ -189,8 +242,11 @@ export function normalize(raw) {
     mrp && price && mrp > price ? Math.round(((mrp - price) / mrp) * 1000) / 10 : null;
 
   return {
-    title: prod?.name || raw.title || null,
-    image: (Array.isArray(prod?.image) ? prod.image[0] : prod?.image) || raw.image || null,
+    title:
+      cleanTitle(prod?.name) || cleanTitle(raw.title) || titleFromUrl(raw.canonical),
+    image:
+      sanitizeImageUrl(Array.isArray(prod?.image) ? prod.image[0] : prod?.image) ||
+      sanitizeImageUrl(raw.image),
     mrp,
     price,
     special_price: price,
@@ -215,12 +271,13 @@ function looksBlocked(text) {
 const HOMEPAGE_RE = /Online Shopping India Mobile, Cameras, Lifestyle/i;
 const isProductUrl = (u) => /\/p\//.test(String(u || ''));
 
-// Junk = blocked/interstitial/homepage/empty — real product page nahi
+// Junk = blocked/interstitial/homepage/empty/template-title — real product page nahi
 function isJunkPage(raw, finalUrl) {
   if (!raw) return true;
   if (looksBlocked(raw.bodyText)) return true;
   if (HOMEPAGE_RE.test(raw.title || '')) return true;
   if (!isProductUrl(finalUrl)) return true;
+  if (isTemplateText(raw.title) && !raw.next) return true;
   return !raw.title && !raw.next;
 }
 
@@ -228,7 +285,7 @@ function isJunkPage(raw, finalUrl) {
 export async function fetchProductPage(url) {
   // 1) fast raw fetch
   try {
-    const res = await fetch(url, {
+    const res = await ffFetch(url, {
       headers: { 'user-agent': UA, 'accept-language': 'en-IN,en;q=0.9' },
       redirect: 'follow',
       signal: AbortSignal.timeout(12000),
@@ -236,7 +293,7 @@ export async function fetchProductPage(url) {
     if (res.ok) {
       const html = await res.text();
       if (!looksBlocked(html) && isProductUrl(res.url)) {
-        const data = extractFromHtml(html, url);
+        const data = extractFromHtml(html, res.url); // final URL — slug/canonical sahi mile
         if (data.price && data.title && !HOMEPAGE_RE.test(data.title)) {
           return { ...data, method: 'fetch' };
         }
@@ -252,22 +309,25 @@ export async function fetchProductPage(url) {
   const page = await ctx.newPage();
   try {
     let raw = null;
+    let data = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(1500); // SSR JSON settle
       raw = (await page.evaluate(extractInPage)) || null;
-      if (isJunkPage(raw, page.url())) {
+      data = raw ? normalize(raw) : null;
+      // junk/block/interstitial + bina price/__NEXT_DATA__ ke = product page nahi
+      if (!data || isJunkPage(raw, page.url()) || (data.price == null && !raw.next)) {
         if (attempt < 3) {
           await page.waitForTimeout(3000 * attempt); // backoff
           continue;
         }
-        const e = new Error('Flipkart blocked/throttled this request — try again after a minute');
+        const e = new Error(blockMsg());
         e.status = 429;
         throw e;
       }
       break;
     }
-    return { ...normalize(raw), method: 'browser' };
+    return { ...data, method: 'browser' };
   } finally {
     await ctx.close().catch(() => {});
   }
@@ -282,14 +342,19 @@ export function isFlipkartUrl(u) {
   }
 }
 
-// ── affiliate platform detect + redirect resolver (CashKaro/EarnKaro) ──
+// ── affiliate platform detect + redirect resolver ──────────────
+// Koi bhi valid http(s) link chalega (Cuelinks/admitad/fkrt/app-link/…):
+// resolve karke Flipkart product par land hona chahiye. Sirf invalid URL reject.
 export function detectPlatform(u) {
   try {
-    const h = new URL(u).hostname.toLowerCase();
+    const p = new URL(u);
+    if (p.protocol !== 'http:' && p.protocol !== 'https:') return null;
+    const h = p.hostname.toLowerCase();
     if (/(^|\.)flipkart\.com$/.test(h)) return 'flipkart';
     if (/(^|\.)(cashkaro\.com|cashkaro\.in|ckr\.me)$/.test(h)) return 'cashkaro';
     if (/(^|\.)(earnkaro\.com|earnkaro\.in)$/.test(h)) return 'earnkaro';
-    return null;
+    if (/(^|\.)(fkrt\.it|flipkart\.app\.link)$/.test(h)) return 'fkrt';
+    return 'affiliate'; // koi bhi aur link — hop-follow karke dekhenge
   } catch {
     return null;
   }
@@ -300,20 +365,57 @@ export function isSupportedAffiliateUrl(u) {
 }
 
 /**
- * CashKaro/EarnKaro hop link → final Flipkart product URL.
- * HTTP redirect chain follow → zarurat pade to Playwright (JS redirect).
- * Returns { platform, affiliateUrl, url } — flipkart pe affiliateUrl=null.
+ * Affiliate/short link → final Flipkart product URL.
+ * - Direct flipkart product link → no-op.
+ * - CashKaro/EarnKaro/fkrt/app-link/koi bhi network link → HTTP hops (≤10)
+ *   → zarurat pade to Playwright (JS/meta redirect) → flipkart /p/ land karna chahiye.
+ * Returns { platform, affiliateUrl, url } — affiliateUrl = user ki original link
+ * (checkout me wahi use hoti hai, attribution bachi rahe).
  */
+// redirector params (dl/url/dest/…) me seedha flipkart /p/ link ho toh
+const REDIR_PARAM = /^(dl|url|dest|target|u|link|redirect|redirect_url|goto|out|next)$/i;
+function pickFlipkartProductParam(rawUrl) {
+  try {
+    const p = new URL(String(rawUrl));
+    for (const [k, v] of p.searchParams) {
+      if (!REDIR_PARAM.test(k)) continue;
+      let val = v;
+      try {
+        val = decodeURIComponent(v);
+      } catch {
+        /* pehle se decoded */
+      }
+      if (isFlipkartUrl(val) && isProductUrl(val)) return val;
+    }
+  } catch {
+    /* invalid URL */
+  }
+  return null;
+}
+
 export async function resolveAffiliateUrl(u) {
   const platform = detectPlatform(u);
-  if (!platform) throw Object.assign(new Error('Unsupported link platform'), { status: 400 });
-  if (platform === 'flipkart') return { platform, affiliateUrl: null, url: u };
+  if (!platform) {
+    const e = new Error('Valid http(s) product link required');
+    e.status = 400;
+    throw e;
+  }
+  if (platform === 'flipkart') {
+    if (!isProductUrl(u)) {
+      const e = new Error(
+        'Product page ka link chahiye (jisme /p/ ho) — search/home link nahi, product kholo aur wahi URL copy karo'
+      );
+      e.status = 400;
+      throw e;
+    }
+    return { platform, affiliateUrl: null, url: u };
+  }
 
   let cur = u;
   for (let hop = 0; hop < 10; hop++) {
     let res;
     try {
-      res = await fetch(cur, {
+      res = await ffFetch(cur, {
         method: 'GET',
         redirect: 'manual',
         headers: { 'user-agent': UA, 'accept-language': 'en-IN,en;q=0.9' },
@@ -331,14 +433,21 @@ export async function resolveAffiliateUrl(u) {
     break; // 200 / no location — meta/JS redirect ho sakta hai
   }
 
+  // JS/meta redirect → browser fallback (HAMESHA jab tak /p/ na mile —
+  // unknown redirectors (fktr.in → trackingv3.linkredirect.in) bhi JS se
+  // aage forward karte hain, HTTP Location ke bina)
   if (!isProductUrl(cur)) {
-    // JS/meta redirect → browser fallback
     try {
       const browser = await getBrowser();
       const ctx = await browser.newContext({ userAgent: UA, locale: 'en-IN' });
       const page = await ctx.newPage();
       await page.goto(u, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(2500);
+      // flipkart /p/ land hone tak wait (fixed sleep se reliable)
+      await page
+        .waitForURL((url) => isFlipkartUrl(url.href) && isProductUrl(url.href), {
+          timeout: 15000,
+        })
+        .catch(() => {});
       cur = page.url();
       await ctx.close().catch(() => {});
     } catch {
@@ -346,9 +455,18 @@ export async function resolveAffiliateUrl(u) {
     }
   }
 
+  // last resort: param (dl/url/…) me seedha flipkart /p/ link
+  if (!isProductUrl(cur)) {
+    const p = pickFlipkartProductParam(cur) || pickFlipkartProductParam(u);
+    if (p) cur = p;
+  }
+
   if (!isProductUrl(cur) || !isFlipkartUrl(cur)) {
+    const landed = String(cur).slice(0, 160);
     const e = new Error(
-      'Link Flipkart product tak redirect nahi hua — wahi link paste karo jo CashKaro/EarnKaro ne diya (login ke baad wali)'
+      'Ye link kisi Flipkart product page par land nahi hua — network ka login-wala affiliate link ya seedha flipkart product link paste karo (landed: ' +
+        landed +
+        ')'
     );
     e.status = 422;
     throw e;
@@ -366,22 +484,24 @@ export async function fetchProductWithSession(storageState, url) {
   const page = await ctx.newPage();
   try {
     let raw = null;
+    let data = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(1500);
       raw = (await page.evaluate(extractInPage)) || null;
-      if (isJunkPage(raw, page.url())) {
+      data = raw ? normalize(raw) : null;
+      if (!data || isJunkPage(raw, page.url()) || (data.price == null && !raw.next)) {
         if (attempt < 3) {
           await page.waitForTimeout(3000 * attempt);
           continue;
         }
-        const e = new Error('Flipkart blocked/throttled this request — try again after a minute');
+        const e = new Error(blockMsg());
         e.status = 429;
         throw e;
       }
       break;
     }
-    return normalize(raw);
+    return data;
   } finally {
     await ctx.close().catch(() => {});
   }

@@ -19,8 +19,8 @@ export default function Settings() {
     ['Platform', health.platform],
     ['Version', health.version],
     ['Uptime', `${health.uptimeSec}s`],
-    ['Browser', health.browser?.executable || 'â€”'],
-    ['Session dir', health.browser?.userDataDir || 'â€”'],
+    ['Browser', health.browser?.executable || '—'],
+    ['Session dir', health.browser?.userDataDir || '—'],
     ['Termux mode', health.browser?.termux ? 'yes' : 'no'],
   ];
 
@@ -33,6 +33,7 @@ export default function Settings() {
 
       <SectionsCard toast={toast} />
       <AddressBook toast={toast} />
+      <ProxyCard toast={toast} />
 
       <div className="card">
         <h2 className="card-title">System</h2>
@@ -51,7 +52,7 @@ export default function Settings() {
         <div className="row" style={{ marginTop: 12 }}>
           <Pill status="ok">server ok</Pill>
           <a href="/api/health" target="_blank" rel="noreferrer" className="small">
-            raw JSON â†’
+            raw JSON →
           </a>
         </div>
       </div>
@@ -74,7 +75,7 @@ export default function Settings() {
           </Button>
         </div>
         <p className="hint" style={{ marginTop: 10 }}>
-          Secrets <code>.env</code> me hain (Cuelinks key, PIN hash, session key) â€” repo me kabhi
+          Secrets <code>.env</code> me hain (Cuelinks key, PIN hash, session key) — repo me kabhi
           nahi. Session files <code>sessions/</code> me (gitignored).
         </p>
       </div>
@@ -82,7 +83,7 @@ export default function Settings() {
   );
 }
 
-/** Sections â€” create/delete, counts. Booking engine isi ko allocation unit banata hai. */
+/** Sections — create/delete, counts. Booking engine isi ko allocation unit banata hai. */
 function SectionsCard({ toast }) {
   const [items, setItems] = useState(null);
   const [name, setName] = useState('');
@@ -127,18 +128,18 @@ function SectionsCard({ toast }) {
     <div className="card">
       <h2 className="card-title">Sections</h2>
       <p className="hint" style={{ marginTop: 0 }}>
-        Accounts ko groups me baanto â€” booking wizard isi section se accounts allocate karta hai.
+        Accounts ko groups me baanto — order flow isi section se accounts allocate karta hai.
       </p>
       {!items ? (
         <Skeleton h={60} />
       ) : items.length === 0 ? (
         <EmptyState
-          icon="ðŸ—‚"
+          icon="🗂"
           title="Koi section nahi"
           hint="Neeche naam daal ke pehla section banao (jaise: Store-A, Flipkart-1)."
         />
       ) : (
-        <table className="table">
+        <table className="table responsive">
           <thead>
             <tr>
               <th>Name</th>
@@ -151,13 +152,19 @@ function SectionsCard({ toast }) {
           <tbody>
             {items.map((s) => (
               <tr key={s.id}>
-                <td>{s.name}</td>
-                <td className="num">{s.accounts}</td>
-                <td className="num">{s.active}</td>
-                <td className="num">{s.booked}</td>
-                <td>
+                <td data-label="Name">{s.name}</td>
+                <td data-label="Accounts" className="num">
+                  {s.accounts}
+                </td>
+                <td data-label="Active" className="num">
+                  {s.active}
+                </td>
+                <td data-label="Booked" className="num">
+                  {s.booked}
+                </td>
+                <td data-label="">
                   <Button size="sm" variant="ghost" onClick={() => del(s)}>
-                    âœ•
+                    ✕
                   </Button>
                 </td>
               </tr>
@@ -182,6 +189,94 @@ function SectionsCard({ toast }) {
   );
 }
 
+/** Proxy — Flipkart IP-block fix. PUT /api/settings { proxy_url } → fetch + browser dono proxy pe. */
+function ProxyCard({ toast }) {
+  const [cfg, setCfg] = useState(null);
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api('/settings')
+      .then((r) => {
+        setCfg(r);
+        setUrl(r.proxy_url || '');
+      })
+      .catch((e) => toast(e.message, 'error'));
+  }, []);
+
+  const save = async (val) => {
+    setBusy(true);
+    try {
+      const r = await api('/settings', { method: 'PUT', body: { proxy_url: val } });
+      setCfg(r);
+      setUrl(r.proxy_url || '');
+      toast(
+        val.trim()
+          ? 'Proxy set — browser restart hua, ab sab Flipkart traffic proxy se'
+          : 'Proxy hataya — direct mode',
+        'success'
+      );
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="row between">
+        <h2 className="card-title">Proxy (Flipkart block fix)</h2>
+        {cfg && (
+          <Pill status={cfg.proxy_active ? 'ok' : 'gray'}>
+            {cfg.proxy_active ? `proxy on · ${cfg.proxy_source}` : 'direct'}
+          </Pill>
+        )}
+      </div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Flipkart aapka IP throttle kare to yahan proxy daalo — fetching, quote aur orders sab proxy se
+        jayenge. Residential IP best, datacenter IP kabhi kabhi bhi banned. Khali = direct.
+      </p>
+      {!cfg ? (
+        <Skeleton h={60} />
+      ) : (
+        <div className="row wrap" style={{ gap: 8 }}>
+          <input
+            className="input"
+            style={{ flex: '1 1 240px', width: 'auto' }}
+            placeholder="http://user:pass@host:port"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            disabled={busy}
+          />
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => save(url)}
+            disabled={busy || !url.trim()}
+          >
+            Save proxy
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => save('')}
+            disabled={busy || !cfg.proxy_url}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
+      {cfg?.proxy_source === 'env' && (
+        <div className="hint">
+          Abhi <code>.env PROXY_URL</code> se chal raha hai — upar save karoge to wahi override
+          karega.
+        </div>
+      )}
+    </div>
+  );
+}
+
 const EMPTY_ADDR = {
   name: '',
   phone: '',
@@ -193,7 +288,7 @@ const EMPTY_ADDR = {
   is_default: true,
 };
 
-/** Address Book â€” booking engine isi ko account pe add/select karta hai (purane address nahi). */
+/** Address Book — booking engine isi ko account pe add/select karta hai (purane address nahi). */
 function AddressBook({ toast }) {
   const [items, setItems] = useState(null);
   const [edit, setEdit] = useState(null); // EMPTY_ADDR copy | existing row | null
@@ -255,19 +350,19 @@ function AddressBook({ toast }) {
         </Button>
       </div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Checkout par sirf yeh address accounts me add/select hota hai â€” saved purane addresses
+        Checkout par sirf yeh address accounts me add/select hota hai — saved purane addresses
         kabhi choose nahi hote.
       </p>
       {!items ? (
         <Skeleton h={60} />
       ) : items.length === 0 ? (
         <EmptyState
-          icon="ðŸ“"
+          icon="📍"
           title="Koi address nahi"
           hint="Booking se pehle apna delivery address add karo."
         />
       ) : (
-        <table className="table">
+        <table className="table responsive">
           <thead>
             <tr>
               <th>Name</th>
@@ -280,20 +375,22 @@ function AddressBook({ toast }) {
           <tbody>
             {items.map((a) => (
               <tr key={a.id}>
-                <td>{a.name}</td>
-                <td className="num">{a.phone}</td>
-                <td className="small">
+                <td data-label="Name">{a.name}</td>
+                <td data-label="Phone" className="num">
+                  {a.phone}
+                </td>
+                <td data-label="Address" className="small">
                   {a.line1}
                   {a.line2 ? `, ${a.line2}` : ''}, {a.city} {a.pincode}
                 </td>
-                <td>{a.is_default ? <Pill status="ok">default</Pill> : 'â€”'}</td>
-                <td>
+                <td data-label="Default">{a.is_default ? <Pill status="ok">default</Pill> : '—'}</td>
+                <td data-label="">
                   <div className="row" style={{ gap: 6 }}>
                     <Button size="sm" variant="outline" onClick={() => setEdit({ ...a })}>
                       Edit
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => del(a)}>
-                      âœ•
+                      ✕
                     </Button>
                   </div>
                 </td>
@@ -313,7 +410,7 @@ function AddressBook({ toast }) {
                 Cancel
               </Button>
               <Button variant="primary" onClick={save} disabled={busy}>
-                {busy ? 'Savingâ€¦' : 'Save'}
+                {busy ? 'Saving…' : 'Save'}
               </Button>
             </>
           }

@@ -169,6 +169,9 @@ NODE_ENV=production
 | Tunnel URL changes on restart         | quick tunnel — har restart pe naya. Stable chahiye → named tunnel + domain (`cloudflared tunnel create kartbulk`)    |
 | `EADDRINUSE`                          | `PORT=` badlo ya pehla process kill                                                                                  |
 | OTP nahi aata                         | number check, `Send OTP` pe rate limit (10/min) — 60s wait                                                           |
+| OTP auto nahi aaya                    | `.env FIREBASE_DB_URL` set + mapping check (`automation/numbers/{phone}`) — warna manual OTP chalega                |
+| Fetch 422 "land nahi hua"             | error me `landed: <url>` dekho — login-wala network link hai; direct Flipkart `/p/` link paste karo                  |
+| Fetch 429 "blocked/throttled"          | IP block — free fix: phone hotspot (carrier IP); paid: Settings → Proxy card / `.env PROXY_URL` (fetch + browser dono). Free proxy lists dead (140 tested, 0 reachable) |
 | Session expired red badges            | Accounts → Re-login (OTP wizard)                                                                                     |
 | DB locked                             | sirf ek server instance chal raha confirm karo; WAL mode on hai check                                                |
 

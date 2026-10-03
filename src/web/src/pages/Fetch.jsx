@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, inr, timeAgo } from '../lib/api.js';
 import { Button, Pill, EmptyState } from '../components/ui.jsx';
+import OrderPanel from '../components/OrderPanel.jsx';
 import { useToast } from '../components/Toasts.jsx';
 
 export default function FetchPage() {
@@ -28,7 +29,7 @@ export default function FetchPage() {
     try {
       const p = await api('/products/fetch', { method: 'POST', body: { url: url.trim() } });
       setProduct(p);
-      toast('Product fetched — real data', 'success');
+      toast('Product fetch ho gaya — real data', 'success');
       loadRecent();
     } catch (e2) {
       setErr(e2.message);
@@ -40,32 +41,45 @@ export default function FetchPage() {
   const copyAffid = async () => {
     if (!product?.affiliate?.url) return;
     await navigator.clipboard.writeText(product.affiliate.url);
-    toast('Affiliate link copied', 'success');
+    toast('Affiliate link copy ho gaya', 'success');
   };
 
   return (
     <div>
       <div className="page-head">
-        <h1>Fetch Product</h1>
-        <p>Flipkart / CashKaro / EarnKaro link paste karo — real price, offers, COD status milega.</p>
+        <h1>Fetch &amp; Order</h1>
+        <p>
+          Koi bhi link paste karo (Flipkart seedha, ya CashKaro / EarnKaro / koi bhi affiliate link) —
+          real data aayega aur yahin se section, qty, price check, quote aur Book sab hoga.
+        </p>
       </div>
 
       <form className="card" onSubmit={fetchNow}>
         <div className="field">
-          <label htmlFor="url">Product URL (Flipkart ya CashKaro/EarnKaro affiliate link)</label>
-          <div className="row" style={{ gap: 8 }}>
+          <label htmlFor="url">Product URL (Flipkart ya koi bhi affiliate product link)</label>
+          <div className="row wrap" style={{ gap: 8 }}>
             <input
               id="url"
               className="input"
               type="url"
               inputMode="url"
-              placeholder="flipkart.com/.../p/... ya cashkaro.com/... ya earnkaro.com/..."
+              placeholder="flipkart.com/.../p/... ya cashkaro / earnkaro / cuelinks / … koi bhi link"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
+              style={{ flex: '1 1 200px', width: 'auto' }}
             />
-            <Button variant="primary" type="submit" disabled={busy || !url.trim()}>
+            <Button
+              variant="primary"
+              type="submit"
+              className="block-mobile"
+              disabled={busy || !url.trim()}
+            >
               {busy ? 'Fetching…' : 'Fetch'}
             </Button>
+          </div>
+          <div className="hint" style={{ marginTop: 8 }}>
+            Network (EarnKaro/CashKaro) link login-wala nahi hona chahiye — seedha Flipkart{' '}
+            <code>/p/</code> link hamesha chalta hai.
           </div>
           {busy && <div className="hint">Page load + parse ho raha hai… (max ~30s)</div>}
           {err && <div className="error-text">{err}</div>}
@@ -92,9 +106,13 @@ export default function FetchPage() {
           </div>
 
           <div className="product-card">
-            {product.image && <img className="thumb" src={product.image} alt="" loading="lazy" />}
+            {product.image ? (
+              <img className="thumb" src={product.image} alt="" loading="lazy" />
+            ) : (
+              <div className="thumb thumb-empty">🛍️</div>
+            )}
             <div style={{ minWidth: 0 }}>
-              <p className="title">{product.title}</p>
+              <p className="title">{product.title || product.url}</p>
               <div className="price-row">
                 <span className="price num">{inr(product.price)}</span>
                 {product.mrp && <span className="mrp num">{inr(product.mrp)}</span>}
@@ -119,7 +137,7 @@ export default function FetchPage() {
             {product.affiliate && (
               <span className="small muted">
                 {product.affiliate.native
-                  ? `${product.affiliate.mode} link ✔ (wahi affiliate link use hoga)`
+                  ? `${product.affiliate.mode} link ✔ (wahi affiliate link checkout me use hoga)`
                   : product.affiliate.converted
                     ? `via Cuelinks ✔`
                     : `mode: ${product.affiliate.mode}${product.affiliate.note ? ` (${product.affiliate.note})` : ''}`}
@@ -128,6 +146,8 @@ export default function FetchPage() {
           </div>
         </div>
       )}
+
+      {product?.id && <OrderPanel key={product.id} product={product} />}
 
       <div className="card">
         <h2 className="card-title">Recent fetches</h2>
@@ -150,21 +170,38 @@ export default function FetchPage() {
               }}
               onClick={() => setProduct(p)}
             >
-              <span style={{ minWidth: 0 }}>
-                <span
-                  style={{
-                    fontWeight: 600,
-                    display: 'block',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    maxWidth: '55vw',
-                  }}
-                >
-                  {p.title || p.url}
-                </span>
-                <span className="small muted num">
-                  {inr(p.price)} · {timeAgo(p.fetched_at)}
+              <span className="row" style={{ minWidth: 0, gap: 10, alignItems: 'center' }}>
+                {p.image ? (
+                  <img
+                    src={p.image}
+                    alt=""
+                    loading="lazy"
+                    style={{
+                      width: 36,
+                      height: 36,
+                      objectFit: 'contain',
+                      borderRadius: 6,
+                      border: '1px solid #eee',
+                      flexShrink: 0,
+                    }}
+                  />
+                ) : null}
+                <span style={{ minWidth: 0 }}>
+                  <span
+                    style={{
+                      fontWeight: 600,
+                      display: 'block',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      maxWidth: '52vw',
+                    }}
+                  >
+                    {p.title || p.url}
+                  </span>
+                  <span className="small muted num">
+                    {inr(p.price)} · {timeAgo(p.fetched_at)}
+                  </span>
                 </span>
               </span>
               <Pill status={p.cod_product ? 'active' : 'gray'}>{p.cod_product ? 'COD' : '—'}</Pill>

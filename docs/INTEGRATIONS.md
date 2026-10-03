@@ -42,18 +42,11 @@ POST /api/products/fetch {url}
 **COD product-level:** JSON-LD `offers.availability` + page text `Cash on Delivery`
 (Per-account COD Phase 3 me session se exact milta hai.)
 
-### A4. Commission Sync (F11)
+### A4. Commission Sync (F11) — ❌ REMOVED (2026-10-03)
 
-```
-POST /api/commission/sync
-  1. GET transactions?from=<last_sync>&status=all
-  2. upsert commission_events (source='cuelinks', external_id unique)
-  3. GET reports/summary → dashboard totals
-  4. conflict: amount change → update + log
-Auto: har 6 ghante (setting) + manual Sync button
-```
-
-Status map: `pending → pending`, `approved → approved`, `paid → paid`, `reversed/rejected → reversed`
+- `/api/commission` route + UI hata diya (user decision); `commission_events` table legacy rakhi hai (tests assert).
+- `listTransactions()` client bhi hata diya; **`convertLink` intact** (fetch attribution ke liye).
+- Earnings affiliate network ke dashboard me dekhni (EarnKaro/CashKaro).
 
 ### A5. Fallback (Cuelinks not available)
 
@@ -200,3 +193,28 @@ per allocation:
 - No account creation automation (sirf login)
 - No bypass of OTP/2FA
 - These keep the system inside "personal automation" territory instead of fraud-tool territory
+
+### B7. Firebase OTP Inbox (auto-login)
+
+SMS-forwarder panel ka Firebase RTDB se OTP khud kheench ke login automatic (bulk
+numbers ke liye — import → row-wise Login, har row ka OTP auto-verify).
+
+- **Config (.env):** `FIREBASE_DB_URL` (required) · `FIREBASE_DB_AUTH` (optional) ·
+  `FIREBASE_MAP_NODE=automation/numbers` · `FIREBASE_MSG_NODE=messages`.
+  Khali chhoda toh feature OFF — manual OTP chalta rahega.
+- **Read-only paths (kuch likhte nahi):**
+  - `automation/numbers/{phone}` → `{ deviceId }` — phone→device mapping
+    (`7018156007` aur `917018156007` dono form try hote hain; 10-min cache)
+  - `messages/{deviceId}/{epochMs}` → `{ message, sender, type }` — incoming SMS
+  - **Mapping miss → fallback:** `messages` ke SAB devices ke recent (last 8)
+    messages scan (batches of 12) — serial login safe (rate ≤10/min = ek time
+    pe ek OTP); last-hit device cache se agli poll ~1s me
+- **Flow:** Send OTP (`POST /:id/otp-request`) → `OtpStep` har 4s
+  `GET /accounts/:id/otp-fetch?since=` poll (max ~90s) → `since` ke baad ke
+  incoming me **Flipkart-text wala 6-digit code priority** (warna newest
+  6-digit) → **auto-fill + auto-verify**; timeout par manual fallback.
+- **Errors:** `501 not_configured` (env missing) · `404 otp_not_found`
+  (abhi nahi aaya / number mapping me nahi) · `502 rtdb_error` (RTDB down).
+- **Security:** OTP sirf authed API se (x-auth-token). Aapke RTDB rules abhi
+  **public read** hain (bina auth ke open) — panel/DB tight karo ya
+  `FIREBASE_DB_AUTH` token set karo. Rate limit: login ≤10/min (OTP burst safe).

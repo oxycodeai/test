@@ -17,7 +17,7 @@ Ek self-hosted dashboard jahan ek shop owner apne 100-200 Flipkart accounts mana
 | G3  | Per-account price/COD/offer comparison              | Real session data, not mock       |
 | G4  | Bulk order placement with qty allocation            | Hybrid (auto + manual confirm)    |
 | G5  | Session expiry alerting                             | Red badge within 10 min of expiry |
-| G6  | Commission tracking                                 | Real Cuelinks/Flipkart API data   |
+| G6  | ~~Commission tracking~~ ❌ REMOVED 2026-10-03     | `/commission` feature hata diya     |
 | G7  | Phone + PC responsive UI                            | Mobile-first, bottom nav          |
 | G8  | Bulk + fast operations                              | 200 acc health check < 5 min      |
 
@@ -50,7 +50,7 @@ Ek self-hosted dashboard jahan ek shop owner apne 100-200 Flipkart accounts mana
 | F8  | COD auto-filter                    | Non-COD acc auto-exclude                                                           | Only COD accs in allocation                      |
 | F9  | Per-account price comparison table | Kaunsa acc kitne ka, kaunsa offer mila                                             | Sortable; best price highlighted                 |
 | F10 | Hybrid order placement             | Auto cart→address→COD; CAPTCHA manual                                              | Order placed or in pending queue                 |
-| F11 | Commission dashboard               | Real earnings from Cuelinks API                                                    | Today/month totals; pending/approved             |
+| F11 | ~~Commission dashboard~~ ❌ REMOVED 2026-10-03      | `/commission` + sync hata diya; earnings network site pe |
 
 ### P1 — Should Have (Phase 5)
 
@@ -60,7 +60,7 @@ Ek self-hosted dashboard jahan ek shop owner apne 100-200 Flipkart accounts mana
 | F13 | CSV export                  | Scan results, orders export               |
 | F14 | PWA                         | Phone pe install, offline shell           |
 | F15 | Desktop notifications       | Order done / session expired alerts       |
-| F16 | Dashboard stats             | Active accs, today orders, earnings cards |
+| F16 | Dashboard stats             | Active accs, today orders, jobs cards |
 
 ### P2 — Nice to Have
 
@@ -88,8 +88,7 @@ As a shop owner, if I enter 5 but only 4 accounts are active, I want a clear war
 **US5 — Order:**
 As a shop owner, I want the system to auto-fill cart/address/COD per account, auto-solve CAPTCHA when possible, and queue failures for my one-tap confirm — so I can place 50 orders in minutes without 50x full manual work.
 
-**US6 — Commission:**
-As an affiliate partner's referrer, I want to see real commission numbers — so I know the earnings are tracking.
+**US6 — Commission:** ❌ REMOVED (2026-10-03) — commission dashboard nahi chahiye; earnings affiliate network ke dashboard me.
 
 ## 7. Non-Functional Requirements
 

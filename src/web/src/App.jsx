@@ -7,9 +7,7 @@ import AuthPage from './pages/Auth.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import FetchPage from './pages/Fetch.jsx';
 import Accounts from './pages/Accounts.jsx';
-import Booking from './pages/Booking.jsx';
 import Orders from './pages/Orders.jsx';
-import Commission from './pages/Commission.jsx';
 import Settings from './pages/Settings.jsx';
 
 export default function App() {
@@ -69,10 +67,9 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="fetch" element={<FetchPage />} />
             <Route path="accounts" element={<Accounts />} />
-            <Route path="booking" element={<Booking />} />
-            <Route path="scan" element={<Navigate to="/booking" replace />} />
+            <Route path="booking" element={<Navigate to="/fetch" replace />} />
+            <Route path="scan" element={<Navigate to="/fetch" replace />} />
             <Route path="orders" element={<Orders />} />
-            <Route path="commission" element={<Commission />} />
             <Route path="settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
