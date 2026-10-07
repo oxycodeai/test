@@ -1,0 +1,9 @@
+[build]
+builder = "nixpacks"
+buildCommand = "npm install && npx playwright install --with-deps chromium && npm run web:build"
+
+[deploy]
+startCommand = "node scripts/start.js"
+restartPolicyType = "ON_FAILURE"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 120
