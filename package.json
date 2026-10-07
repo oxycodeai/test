@@ -21,6 +21,7 @@
     "db:migrate": "node src/db/migrate.js",
     "db:backup": "node src/db/backup.js",
     "smoke": "node scripts/smoke.js",
+    "e2e": "node scripts/e2e-demo.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

@@ -230,6 +230,7 @@ export default function Accounts() {
                 </th>
                 <th>Label</th>
                 <th>Identifier</th>
+                <th>Invalid num</th>
                 <th>Section</th>
                 <th>Status</th>
                 <th>Last checked</th>
@@ -250,6 +251,9 @@ export default function Accounts() {
                   <td data-label="Label">{a.label || <span className="muted">—</span>}</td>
                   <td data-label="Number" className="num">
                     {a.identifier}
+                  </td>
+                  <td data-label="Invalid num" className="num">
+                    {a.invalid_number || <span className="muted" title="Settings → Import Invalid Num se connect hoga">—</span>}
                   </td>
                   <td data-label="Section" className="small">
                     {a.section_name || <span className="muted">—</span>}

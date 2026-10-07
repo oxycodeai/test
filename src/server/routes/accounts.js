@@ -6,6 +6,7 @@ import { enqueue, waitForJob } from '../../worker/queue.js';
 import { assertLoginRate, setPendingOtp, latestRequestId } from '../../worker/otp-store.js';
 import { deleteSession, saveSession } from '../services/sessionStore.js';
 import { isConfigured as otpInboxReady, fetchLatestOtp } from '../services/otpInbox.js';
+import { ensurePairs } from '../services/numberPool.js';
 
 const r = Router();
 
@@ -25,6 +26,7 @@ function shape(row) {
     section_id: row.section_id ?? null,
     section_name: row.section_name ?? null,
     booked_until: row.booked_until ?? null,
+    invalid_number: row.invalid_number ?? null,
     last_checked: row.last_checked,
     last_error: row.last_error,
     created_at: row.created_at,
@@ -59,8 +61,10 @@ r.get(
     const total = db.prepare(`SELECT COUNT(*) n FROM accounts a ${clause}`).get(...args).n;
     const items = db
       .prepare(
-        `SELECT a.*, s.name AS section_name FROM accounts a
+        `SELECT a.*, s.name AS section_name, np.number AS invalid_number
+         FROM accounts a
          LEFT JOIN sections s ON s.id = a.section_id
+         LEFT JOIN number_pool np ON np.account_id = a.id
          ${clause} ORDER BY a.id DESC LIMIT ? OFFSET ?`
       )
       .all(...args, limit, (page - 1) * limit)
@@ -93,6 +97,7 @@ r.post(
          VALUES (?, ?, 'pending', ?, ?)`
       )
       .run(label || null, id, t, t);
+    ensurePairs(); // naya login number → khali fix invalid number connect
     res
       .status(201)
       .json(shape(db.prepare('SELECT * FROM accounts WHERE id = ?').get(info.lastInsertRowid)));
@@ -162,6 +167,7 @@ r.post(
       }
     });
     run();
+    ensurePairs(); // naye login numbers → khali fix invalid numbers connect
     res.json({ created, skipped, total: items.length, activated });
   })
 );

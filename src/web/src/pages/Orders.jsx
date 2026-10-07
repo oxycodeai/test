@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, inr, timeAgo, openStream } from '../lib/api.js';
 import { Button, Pill, EmptyState, Skeleton, Modal } from '../components/ui.jsx';
 import { useToast } from '../components/Toasts.jsx';
+import { stepLabel } from '../../../shared/steps.js';
 
 const TABS = [
   { key: 'pending', label: 'Pending CAPTCHA' },
@@ -35,6 +36,14 @@ export default function Orders() {
         load().catch(() => {});
       },
       order_placed: () => load().catch(() => {}),
+      order_step: (d) => {
+        // sirf step patch — list refresh nahi (har step pe ek GET bachao)
+        setItems((prev) =>
+          prev
+            ? prev.map((o) => (o.id === d.orderId ? { ...o, step: d.step, updated_at: Date.now() } : o))
+            : prev
+        );
+      },
       job_done: (d) => {
         if (['order', 'price_check'].includes(d.type)) load().catch(() => {});
       },
@@ -61,7 +70,7 @@ export default function Orders() {
     setBusy(true);
     try {
       const r = await api(`/orders/${orderId}/retry`, { method: 'POST' });
-      toast(r?.step === 'price_check' ? 'Re-quote queued (price check)' : 'Retry queued', 'success');
+      toast(r?.step === 'order' ? 'Retry queued — fresh attempt chalega' : 'Retry queued', 'success');
       load();
     } catch (e) {
       toast(e.message, 'error');
@@ -96,7 +105,7 @@ export default function Orders() {
         <EmptyState
           icon="🛒"
           title={`${TABS.find((t) => t.key === tab)?.label} — koi order nahi`}
-          hint="Fetch page par link paste karke quote karo → Book karke orders yahan track honge."
+          hint="Fetch page se product lo → Order setup wizard me Start karo → orders yahan track honge."
           action={
             <Link to="/fetch">
               <button className="btn primary sm">Go to Fetch &amp; Order</button>
@@ -122,7 +131,10 @@ export default function Orders() {
                 <tr key={o.id}>
                   <td data-label="Account">
                     {o.account_label || o.identifier || o.account_masked}
-                    <div className="small muted">{o.identifier || o.account_masked}</div>
+                    <div className="small muted">
+                      {o.identifier || o.account_masked}
+                      {o.attempt_no > 1 ? ` · attempt ${o.attempt_no}` : ''}
+                    </div>
                   </td>
                   <td data-label="Product" className="small">
                     {(o.product_title || '—').slice(0, 48)}
@@ -132,13 +144,19 @@ export default function Orders() {
                     {o.price != null ? inr(o.price) : '—'}
                   </td>
                   <td data-label="State">
-                    <Pill status={o.captcha_state} />
+                    {o.captcha_state === 'auto' && !o.error ? (
+                      <Pill status="quoting">
+                        {o.step && o.step !== 'done' ? stepLabel(o.step) : 'queued'}
+                      </Pill>
+                    ) : (
+                      <Pill status={o.captcha_state} />
+                    )}
                   </td>
                   <td data-label="Ref" className="small">
                     {o.order_ref ? (
                       <b>{o.order_ref}</b>
                     ) : o.error ? (
-                      <span title={o.error}>{String(o.error).slice(0, 46)}</span>
+                      <span title={o.error}>{String(o.error).slice(0, 80)}</span>
                     ) : (
                       '—'
                     )}
@@ -157,7 +175,7 @@ export default function Orders() {
                         o.captcha_state !== 'pending' &&
                         o.captcha_state !== 'placed' && (
                           <Button size="sm" variant="outline" onClick={() => retry(o.id)} disabled={busy}>
-                            {o.price == null ? 'Re-quote' : 'Retry'}
+                            Retry
                           </Button>
                         )}
                     </div>

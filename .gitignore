@@ -19,3 +19,6 @@ coverage/
 
 # account exports (tokens wale — kabhi commit mat karo)
 accounts_export*.json
+
+# voice notes (personal)
+vn/

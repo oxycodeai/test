@@ -11,6 +11,7 @@ import accountRoutes from './routes/accounts.js';
 import productRoutes from './routes/products.js';
 import sectionRoutes from './routes/sections.js';
 import addressRoutes from './routes/addresses.js';
+import numberRoutes from './routes/numbers.js';
 import bookingRoutes from './routes/bookings.js';
 import orderRoutes from './routes/orders.js';
 
@@ -32,6 +33,7 @@ export function createApp() {
   app.use('/api/products', productRoutes);
   app.use('/api/sections', sectionRoutes);
   app.use('/api/addresses', addressRoutes);
+  app.use('/api/numbers', numberRoutes);
   app.use('/api/bookings', bookingRoutes);
   app.use('/api/orders', orderRoutes);
   app.use('/api', notFound);

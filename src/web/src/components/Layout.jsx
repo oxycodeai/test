@@ -5,6 +5,7 @@ const NAV = [
   { to: '/fetch', label: 'Fetch & Order', short: 'Fetch', ico: '🔍' },
   { to: '/accounts', label: 'Accounts', short: 'Accounts', ico: '👤' },
   { to: '/orders', label: 'Orders', short: 'Orders', ico: '🛒' },
+  { to: '/live', label: 'Live Progress', short: 'Live', ico: '▶' },
   { to: '/settings', label: 'Settings', short: 'Settings', ico: '⚙' },
 ];
 

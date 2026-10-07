@@ -25,8 +25,31 @@ export async function assertNotBlocked(page) {
   }
 }
 
+/**
+ * chrome-error / nav-interrupt se recovery ke saath goto.
+ * (Pehle /account pe failed nav page ko chrome-error par chhod deta hai —
+ * turant ki gayi agli goto usi error se "interrupted" hoti hai.)
+ */
+export async function gotoSafe(page, url, opts = {}) {
+  let lastErr = null;
+  for (let i = 0; i < 3; i++) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000, ...opts });
+      return;
+    } catch (e) {
+      lastErr = e;
+      const transient = /interrupted by another navigation|chrome-error|ERR_TOO_MANY_REDIRECTS/i.test(
+        e.message || ''
+      );
+      if (!transient) throw e;
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+  }
+  throw lastErr;
+}
+
 export async function openLogin(page) {
-  await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await gotoSafe(page, LOGIN_URL);
   await page.waitForTimeout(1500);
   await assertNotBlocked(page);
 }
@@ -53,7 +76,7 @@ export async function fillIdentifier(page, identifier) {
   } else {
     const input = page
       .locator(
-        'input[type="tel"], input[placeholder*="Mobile" i], input[placeholder*="number" i]'
+        'input[type="tel"], input[type="number"], input[placeholder*="Mobile" i], input[placeholder*="number" i]'
       )
       .first();
     await input.waitFor({ timeout: 8000 });
@@ -77,6 +100,11 @@ export async function waitOtpScreen(page, timeout = 25000) {
       () => {
         if (document.querySelectorAll('input[maxlength="1"]').length >= 4) return true;
         if (document.querySelector('input[autocomplete="one-time-code"]')) return true;
+        if (
+          /verification code|enter the otp/i.test(document.body?.innerText || '') &&
+          document.querySelectorAll('input[type="number"], input[inputmode="numeric"]').length >= 6
+        )
+          return true;
         return [...document.querySelectorAll('input')].some((i) =>
           /otp|verification|one.time/i.test(i.placeholder || '')
         );
@@ -97,8 +125,13 @@ export async function submitOtp(page, otp) {
   const code = String(otp || '').replace(/\D/g, '');
   if (code.length !== 6) throw new LoginError('OTP 6 digit hona chahiye', 400);
 
-  const boxes = page.locator('input[maxlength="1"]');
-  const n = await boxes.count().catch(() => 0);
+  let boxes = page.locator('input[maxlength="1"]');
+  let n = await boxes.count().catch(() => 0);
+  if (n < 6) {
+    // naya RN UI: 6 boxes bina maxlength attribute
+    boxes = page.locator('input[type="number"], input[inputmode="numeric"]');
+    n = await boxes.count().catch(() => 0);
+  }
   if (n >= 6) {
     for (let i = 0; i < 6; i++) {
       await boxes.nth(i).fill(code[i]);
@@ -123,12 +156,15 @@ export async function submitOtp(page, otp) {
     });
 }
 
-/** Login-complete ka wait — redirect se /account/login hat jaye.
+/** Login page par ho? (/account/login aur naya /login dono — redirect ke baad /login) */
+const onLoginPage = (url) => /\/(account\/)?login(\/|$|\?|#)/.test(url);
+
+/** Login-complete ka wait — redirect se login page hat jaye.
  *  Wrong-OTP error text dikhi to LoginError(400). */
 export async function waitLoggedIn(page, timeout = 25000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (!/\/account\/login/.test(page.url())) return true;
+    if (!onLoginPage(page.url())) return true;
     const errText = await page
       .evaluate(() => document.body?.innerText?.slice(0, 8000) || '')
       .catch(() => '');
@@ -140,6 +176,6 @@ export async function waitLoggedIn(page, timeout = 25000) {
     }
     await page.waitForTimeout(400);
   }
-  if (!/\/account\/login/.test(page.url())) return true;
+  if (!onLoginPage(page.url())) return true;
   throw new LoginError('Login complete nahi hua — OTP galat ya session timeout', 400);
 }

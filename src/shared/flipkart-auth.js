@@ -1,20 +1,22 @@
 // Login marker — health check aur verify dono ek jagah (INTEGRATIONS B2).
-import { ACCOUNT_URL, LOGIN_UA } from './flipkart-login.js';
+import { LOGIN_UA } from './flipkart-login.js';
 
 /**
- * Logged in? → /account par redirect hone ya na hone se pata chalta hai.
- * Logged OUT ho to Flipkart /account/login par bhej deta hai.
- * Network error throw hota hai (caller retry kare) — false sirf login-wall par.
+ * Logged in? — sirf auth cookies se (koi navigation nahi).
+ *
+ * Flipkart ab `/account` par DONO state (guest aur logged-in) me
+ * ERR_TOO_MANY_REDIRECTS loop deta hai — navigation-based probe unreliable
+ * hai. Session save hote waqt `at`/`S` cookies aati hain; guest ke paas
+ * ye cookies hoti hi nahi. Stale cookies (server-side dead) pe flow checkout
+ * wall par auto-relogin se khud heal hota hai.
  */
-export async function isLoggedIn(page, { timeout = 30000 } = {}) {
-  await page.goto(ACCOUNT_URL, { waitUntil: 'domcontentloaded', timeout });
-  await page.waitForTimeout(1200); // redirect settle
-  if (/\/account\/login/.test(page.url())) return false;
-
-  const text = await page.evaluate(() => document.body?.innerText?.slice(0, 12000) || '');
-  // login-wall modal / "Login to view" without redirect bhi expired hai
-  if (/log in|sign in/i.test(text) && /login/i.test(page.url())) return false;
-  return true;
+export async function isLoggedIn(page) {
+  try {
+    const ck = await page.context().cookies('https://www.flipkart.com');
+    return ck.some((c) => c.name === 'at' || c.name === 'S');
+  } catch {
+    return true; // cookie read fail → age badho (wall heal dega)
+  }
 }
 
 export { LOGIN_UA };

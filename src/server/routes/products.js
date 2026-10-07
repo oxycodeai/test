@@ -1,22 +1,9 @@
 import { Router } from 'express';
 import { h } from '../middleware/error.js';
 import { getDb } from '../../db/index.js';
-import { now } from '../../shared/constants.js';
-import { fetchProductPage, isSupportedAffiliateUrl, resolveAffiliateUrl } from '../services/pageFetch.js';
-import { convertLink, isConfigured } from '../integrations/cuelinks.js';
-import { sendEvent } from './stream.js';
+import { resolveProduct, productShape as shape } from '../services/productResolve.js';
 
 const r = Router();
-const CACHE_MS = 15 * 60 * 1000;
-
-function shape(row) {
-  return {
-    ...row,
-    offers: row.offers_json ? JSON.parse(row.offers_json) : [],
-    offers_json: undefined,
-    age_min: Math.max(0, Math.round((now() - row.fetched_at) / 60000)),
-  };
-}
 
 r.get(
   '/',
@@ -32,78 +19,19 @@ r.get(
 r.post(
   '/fetch',
   h(async (req, res) => {
-    const url = String(req.body?.url || '').trim();
-    if (!url || !isSupportedAffiliateUrl(url)) {
-      return res.status(400).json({
-        error: {
-          code: 'invalid_url',
-          message:
-            'Valid http(s) link do — Flipkart / CashKaro / EarnKaro / koi bhi affiliate link chalega',
-        },
+    try {
+      const out = await resolveProduct(req.body?.url);
+      res.status(out.cached ? 200 : 201).json({
+        ...shape(out.row),
+        cached: out.cached,
+        affiliate: out.affiliate,
+        method: out.method,
+      });
+    } catch (e) {
+      res.status(e.status || 502).json({
+        error: { code: e.code || 'fetch_failed', message: e.message || 'Fetch fail ho gaya' },
       });
     }
-    const db = getDb();
-
-    // Network/short link → final Flipkart product URL (direct flipkart pe no-op)
-    const resolved = await resolveAffiliateUrl(url);
-    const canonical = resolved.url;
-
-    // cache: same canonical URL, <15 min → return fresh
-    const cached = db
-      .prepare('SELECT * FROM products WHERE url = ? ORDER BY fetched_at DESC LIMIT 1')
-      .get(canonical);
-    if (cached && now() - cached.fetched_at < CACHE_MS) {
-      return res.json({ ...shape(cached), cached: true, affiliate: { mode: 'cache' } });
-    }
-
-    // affiliate: user ki original network link rakh (checkout me wahi attribution degi);
-    // direct flipkart link ho to Cuelinks se convert.
-    const aff = resolved.affiliateUrl
-      ? { url: resolved.affiliateUrl, mode: resolved.platform, native: true, converted: false }
-      : await convertLink(canonical);
-
-    // real product data
-    const data = await fetchProductPage(canonical);
-    if (!data.title && !data.price) {
-      return res.status(502).json({
-        error: {
-          code: 'fetch_failed',
-          message: 'Could not extract product data (page changed or blocked)',
-        },
-      });
-    }
-
-    const t = now();
-    const info = db
-      .prepare(
-        `INSERT INTO products (url, platform, affiliate_url, pid, title, image, mrp, price, special_price, discount_pct,
-                               in_stock, cod_product, offers_json, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        canonical,
-        resolved.platform,
-        resolved.affiliateUrl,
-        new URL(canonical).searchParams.get('pid'),
-        data.title,
-        data.image,
-        data.mrp,
-        data.price,
-        data.special_price,
-        data.discount_pct,
-        data.in_stock,
-        data.cod_product,
-        JSON.stringify(data.offers || []),
-        t
-      );
-    const row = db.prepare('SELECT * FROM products WHERE id = ?').get(info.lastInsertRowid);
-    sendEvent('product_fetched', { id: row.id, title: row.title });
-    res.status(201).json({
-      ...shape(row),
-      cached: false,
-      affiliate: { ...aff, configured: isConfigured() },
-      method: data.method,
-    });
   })
 );
 

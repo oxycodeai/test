@@ -3,7 +3,7 @@ import globals from 'globals';
 import react from 'eslint-plugin-react';
 
 export default [
-  { ignores: ['node_modules/', 'src/web/dist/', 'data/', 'sessions/', 'logs/'] },
+  { ignores: ['node_modules/', 'src/web/dist/', 'data/', 'sessions/', 'logs/', '.tmp-test/'] },
   js.configs.recommended,
   {
     files: ['**/*.js', '**/*.jsx', '**/*.mjs'],

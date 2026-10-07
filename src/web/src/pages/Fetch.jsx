@@ -1,214 +1,51 @@
-import { useEffect, useState } from 'react';
-import { api, inr, timeAgo } from '../lib/api.js';
-import { Button, Pill, EmptyState } from '../components/ui.jsx';
+import { useState } from 'react';
 import OrderPanel from '../components/OrderPanel.jsx';
-import { useToast } from '../components/Toasts.jsx';
 
+/**
+ * Fetch & Order — PURANA flow (fetch button → product card/image → order form)
+ * hata diya. Ab: link paste → Start. Product/COD/stock andar hi
+ * (POST /bookings url mode) resolve hota hai — error Seedha Start ke neeche.
+ */
 export default function FetchPage() {
-  const toast = useToast();
   const [url, setUrl] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-  const [product, setProduct] = useState(null);
-  const [recent, setRecent] = useState([]);
 
-  const loadRecent = () =>
-    api('/products')
-      .then((r) => setRecent(r.items))
-      .catch(() => {});
-
-  useEffect(() => {
-    loadRecent();
-  }, []);
-
-  const fetchNow = async (e) => {
-    e?.preventDefault();
-    if (!url.trim()) return;
-    setBusy(true);
-    setErr('');
-    try {
-      const p = await api('/products/fetch', { method: 'POST', body: { url: url.trim() } });
-      setProduct(p);
-      toast('Product fetch ho gaya — real data', 'success');
-      loadRecent();
-    } catch (e2) {
-      setErr(e2.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const copyAffid = async () => {
-    if (!product?.affiliate?.url) return;
-    await navigator.clipboard.writeText(product.affiliate.url);
-    toast('Affiliate link copy ho gaya', 'success');
-  };
+  const urlOk = /^https?:\/\//i.test(url.trim());
 
   return (
     <div>
       <div className="page-head">
-        <h1>Fetch &amp; Order</h1>
+        <h1>Order Start</h1>
         <p>
-          Koi bhi link paste karo (Flipkart seedha, ya CashKaro / EarnKaro / koi bhi affiliate link) —
-          real data aayega aur yahin se section, qty, price check, quote aur Book sab hoga.
+          Sirf link daalo — section, qty, price limit bharo aur <b>Start</b> dabao. Product ka data
+          Start karte hi khud resolve hoga (COD wala hi order chalega).
         </p>
       </div>
 
-      <form className="card" onSubmit={fetchNow}>
+      <form className="card" onSubmit={(e) => e.preventDefault()}>
         <div className="field">
-          <label htmlFor="url">Product URL (Flipkart ya koi bhi affiliate product link)</label>
-          <div className="row wrap" style={{ gap: 8 }}>
-            <input
-              id="url"
-              className="input"
-              type="url"
-              inputMode="url"
-              placeholder="flipkart.com/.../p/... ya cashkaro / earnkaro / cuelinks / … koi bhi link"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              style={{ flex: '1 1 200px', width: 'auto' }}
-            />
-            <Button
-              variant="primary"
-              type="submit"
-              className="block-mobile"
-              disabled={busy || !url.trim()}
-            >
-              {busy ? 'Fetching…' : 'Fetch'}
-            </Button>
-          </div>
+          <label htmlFor="url">Product URL (Flipkart seedha ya koi bhi affiliate link)</label>
+          <input
+            id="url"
+            className="input"
+            type="url"
+            inputMode="url"
+            placeholder="flipkart.com/.../p/... ya cashkaro / earnkaro / cuelinks / … koi bhi link"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
           <div className="hint" style={{ marginTop: 8 }}>
             Network (EarnKaro/CashKaro) link login-wala nahi hona chahiye — seedha Flipkart{' '}
             <code>/p/</code> link hamesha chalta hai.
           </div>
-          {busy && <div className="hint">Page load + parse ho raha hai… (max ~30s)</div>}
-          {err && <div className="error-text">{err}</div>}
+          {url.trim() && !urlOk && (
+            <div className="error-text">Link http/https se shuru hona chahiye</div>
+          )}
         </div>
       </form>
 
-      {product && (
-        <div className="card">
-          <div className="row between" style={{ marginBottom: 10 }}>
-            <span className="meta-chip">
-              Updated {timeAgo(product.fetched_at)}
-              {product.cached ? ' · cached' : ''}
-              {product.method ? ` · via ${product.method}` : ''}
-            </span>
-            <span className="row" style={{ gap: 6 }}>
-              <Pill status="ok">{product.platform || 'flipkart'}</Pill>
-              <Pill status={product.in_stock ? 'active' : 'expired'}>
-                {product.in_stock ? 'In stock' : 'Out of stock'}
-              </Pill>
-              <Pill status={product.cod_product ? 'active' : 'expired'}>
-                {product.cod_product ? 'COD available' : 'COD nahi'}
-              </Pill>
-            </span>
-          </div>
-
-          <div className="product-card">
-            {product.image ? (
-              <img className="thumb" src={product.image} alt="" loading="lazy" />
-            ) : (
-              <div className="thumb thumb-empty">🛍️</div>
-            )}
-            <div style={{ minWidth: 0 }}>
-              <p className="title">{product.title || product.url}</p>
-              <div className="price-row">
-                <span className="price num">{inr(product.price)}</span>
-                {product.mrp && <span className="mrp num">{inr(product.mrp)}</span>}
-                {product.discount_pct ? (
-                  <span className="disc-chip">{product.discount_pct}% off</span>
-                ) : null}
-              </div>
-              {product.offers?.length > 0 && (
-                <ul className="offers">
-                  {product.offers.map((o, i) => (
-                    <li key={i}>{o}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          <div className="row" style={{ marginTop: 14, gap: 8 }}>
-            <Button variant="blue" onClick={copyAffid} disabled={!product.affiliate?.url}>
-              Copy affiliate link
-            </Button>
-            {product.affiliate && (
-              <span className="small muted">
-                {product.affiliate.native
-                  ? `${product.affiliate.mode} link ✔ (wahi affiliate link checkout me use hoga)`
-                  : product.affiliate.converted
-                    ? `via Cuelinks ✔`
-                    : `mode: ${product.affiliate.mode}${product.affiliate.note ? ` (${product.affiliate.note})` : ''}`}
-              </span>
-            )}
-          </div>
-        </div>
+      {url.trim() && (
+        <OrderPanel url={urlOk ? url.trim() : ''} />
       )}
-
-      {product?.id && <OrderPanel key={product.id} product={product} />}
-
-      <div className="card">
-        <h2 className="card-title">Recent fetches</h2>
-        {recent.length === 0 ? (
-          <EmptyState icon="🔍" title="Abhi tak kuch fetch nahi hua" />
-        ) : (
-          recent.map((p) => (
-            <button
-              key={p.id}
-              className="row between"
-              style={{
-                width: '100%',
-                background: 'none',
-                border: 0,
-                borderBottom: '1px solid #f0f0f0',
-                padding: '10px 0',
-                cursor: 'pointer',
-                textAlign: 'left',
-                font: 'inherit',
-              }}
-              onClick={() => setProduct(p)}
-            >
-              <span className="row" style={{ minWidth: 0, gap: 10, alignItems: 'center' }}>
-                {p.image ? (
-                  <img
-                    src={p.image}
-                    alt=""
-                    loading="lazy"
-                    style={{
-                      width: 36,
-                      height: 36,
-                      objectFit: 'contain',
-                      borderRadius: 6,
-                      border: '1px solid #eee',
-                      flexShrink: 0,
-                    }}
-                  />
-                ) : null}
-                <span style={{ minWidth: 0 }}>
-                  <span
-                    style={{
-                      fontWeight: 600,
-                      display: 'block',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      maxWidth: '52vw',
-                    }}
-                  >
-                    {p.title || p.url}
-                  </span>
-                  <span className="small muted num">
-                    {inr(p.price)} · {timeAgo(p.fetched_at)}
-                  </span>
-                </span>
-              </span>
-              <Pill status={p.cod_product ? 'active' : 'gray'}>{p.cod_product ? 'COD' : '—'}</Pill>
-            </button>
-          ))
-        )}
-      </div>
     </div>
   );
 }

@@ -12,7 +12,7 @@ function shape(row) {
 function validate(body) {
   const v = {
     name: String(body?.name || '').trim(),
-    phone: String(body?.phone || '').replace(/\D/g, ''),
+    phone: String(body?.phone || '').replace(/\D/g, '') || '',
     pincode: String(body?.pincode || '').replace(/\D/g, ''),
     line1: String(body?.line1 || '').trim(),
     line2: String(body?.line2 || '').trim() || null,
@@ -20,11 +20,11 @@ function validate(body) {
     state: String(body?.state || '').trim() || null,
     is_default: body?.is_default ? 1 : 0,
   };
-  if (!v.name || !v.phone || !v.pincode || !v.line1 || !v.city) {
-    return { error: 'Name, phone, pincode, address line aur city required hain' };
+  if (!v.name || !v.pincode || !v.line1 || !v.city) {
+    return { error: 'Name, pincode, address line aur city required hain' };
   }
   if (!/^\d{6}$/.test(v.pincode)) return { error: 'Pincode 6 digit hona chahiye' };
-  if (!/^\d{10,15}$/.test(v.phone)) return { error: 'Phone 10-15 digit hona chahiye' };
+  if (v.phone && !/^\d{10,15}$/.test(v.phone)) return { error: 'Phone 10-15 digit hona chahiye' };
   return { value: v };
 }
 

@@ -3,6 +3,10 @@ import { h } from '../middleware/error.js';
 import { getDb } from '../../db/index.js';
 import { now, maskIdentifier } from '../../shared/constants.js';
 import { enqueue } from '../../worker/queue.js';
+import { countTotal, ensurePairs, missingPairs } from '../services/numberPool.js';
+import { resolveProduct } from '../services/productResolve.js';
+import { tgSend, tgProgress } from '../services/tg.js';
+import { progressText } from '../services/bookingStore.js';
 
 const r = Router();
 
@@ -21,6 +25,10 @@ function shapeBooking(row) {
     qty: row.qty,
     qty_mode: row.qty_mode,
     per_acc_qty: row.per_acc_qty,
+    n_accounts: row.n_accounts ?? null,
+    qty_per_cart: row.qty_per_cart ?? null,
+    attempts_per_acc: row.attempts_per_acc ?? null,
+    max_price: row.max_price ?? null,
     status: row.status,
     progress: row.progress,
     total: row.total,
@@ -40,9 +48,11 @@ function shapeOrder(row) {
     identifier: row.account_identifier || null,
     account_masked: row.account_masked || null,
     qty: row.qty,
+    attempt_no: row.attempt_no ?? 1,
     price: row.price,
     captcha_state: row.captcha_state,
     order_ref: row.order_ref,
+    step: row.step || null,
     error: row.error,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -92,71 +102,133 @@ r.get(
   })
 );
 
-// Quote step — allocate accounts, orders banao, price_check jobs enqueue
+// New model — N accounts × A attempts (har account pe Q qty ka cart),
+// seedha running + order jobs enqueue (quote/confirm 2-phase nahi)
 r.post(
   '/',
   h(async (req, res) => {
-    const { product_id, section_id, qty, qty_mode = 'total', per_acc_qty, address_id } =
+    const { url, product_id, section_id, address_id, n_accounts, qty_per_cart, attempts_per_acc, max_price } =
       req.body || {};
     const db = getDb();
 
-    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(product_id));
-    if (!product) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'No such product' } });
+    // url mode (fetch-page hata diya): link se andar hi product resolve → COD gate.
+    // product_id mode backward-compat me chalta rahega.
+    let product;
+    if (url && !product_id) {
+      try {
+        product = (await resolveProduct(url)).row;
+      } catch (e) {
+        return res.status(e.status || 502).json({
+          error: { code: e.code || 'fetch_failed', message: e.message || 'Product resolve nahi hua' },
+        });
+      }
+    } else {
+      product = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(product_id));
+      if (!product) {
+        return res.status(404).json({ error: { code: 'not_found', message: 'No such product' } });
+      }
     }
-    const section = db.prepare('SELECT * FROM sections WHERE id = ?').get(Number(section_id));
-    if (!section) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'No such section' } });
+    // COD gate — SOFT (COD dynamic hai: kisi account pe aata hai, kisi nahi).
+    // Fetch-time cod=0 ab BLOCK nahi karta: har attempt payment page pe khud
+    // check hota hai → COD missing ho to sirf wo attempt skip, baaki attempts
+    // (admin ke A tries) aur baaki accounts chalte rahenge.
+    if (!Number(product.cod_product)) {
+      tgSend(
+        `Note: COD fetch me nahi dikha — attempt-time check hoga (COD dynamic): ${(product.title || product.url || '').slice(0, 120)}`,
+        3600,
+        `cod:${product.id}`
+      );
     }
     const address = db.prepare('SELECT * FROM addresses WHERE id = ?').get(Number(address_id));
     if (!address) {
       return res.status(404).json({ error: { code: 'not_found', message: 'No such address' } });
     }
-    if (qty_mode !== 'total' && qty_mode !== 'per_account') {
-      return res.status(400).json({ error: { code: 'invalid', message: 'qty_mode galat hai' } });
+    // Invalid-num pre-flight — Start tap karte hi bata do, process mat chalao.
+    if (countTotal() === 0) {
+      tgSend('Invalid number pool khaali — Settings me Import Invalid Num karo', 1800, 'pool:empty');
+      return res.status(409).json({
+        error: {
+          code: 'no_invalid_number',
+          message: 'Koi invalid number nahi — pehle Settings me Import Invalid Num karo',
+          available: 0,
+        },
+      });
+    }
+    let section = null;
+    if (section_id != null && section_id !== '') {
+      section = db.prepare('SELECT * FROM sections WHERE id = ?').get(Number(section_id));
+      if (!section) {
+        return res.status(404).json({ error: { code: 'not_found', message: 'No such section' } });
+      }
     }
 
-    const q = Math.max(1, parseInt(qty, 10) || 1);
-    const per = Math.max(1, parseInt(per_acc_qty, 10) || 1);
-    const t = now();
+    const N = Math.max(1, parseInt(n_accounts, 10) || 1);
+    const Q = Math.max(1, parseInt(qty_per_cart, 10) || 1);
+    const A = Math.max(1, parseInt(attempts_per_acc, 10) || 1);
+    let cap = null;
+    if (max_price != null && max_price !== '') {
+      const n = parseInt(String(max_price).replace(/[^\d]/g, ''), 10);
+      if (!n) {
+        return res.status(400).json({ error: { code: 'invalid', message: 'max_price galat hai' } });
+      }
+      cap = n;
+    }
 
+    const t = now();
+    // Free accounts: active + booked_until free + kisi running/quoting/quoted booking me na ho
     const eligible = db
       .prepare(
         `SELECT a.id FROM accounts a
-         WHERE a.section_id = ? AND a.status = 'active'
+         WHERE a.status = 'active'
            AND (a.booked_until IS NULL OR a.booked_until <= ?)
-         ORDER BY a.id`
+           AND (? IS NULL OR a.section_id = ?)
+           AND NOT EXISTS (
+             SELECT 1 FROM orders o JOIN bookings b ON b.id = o.booking_id
+             WHERE o.account_id = a.id AND b.status IN ('running','quoting','quoted')
+           )
+         ORDER BY a.id
+         LIMIT ?`
       )
-      .all(section.id, t)
+      .all(t, section ? section.id : null, section ? section.id : null, N)
       .map((x) => x.id);
 
-    let plan;
-    if (qty_mode === 'per_account') {
-      if (eligible.length === 0) {
-        return res.status(409).json({
-          error: {
-            code: 'insufficient',
-            message: 'Section me koi free active account nahi',
-            available: 0,
-            needed: per,
-          },
-        });
-      }
-      plan = eligible.map((account_id) => ({ account_id, qty: per }));
-    } else {
-      if (eligible.length < q) {
-        return res.status(409).json({
-          error: {
-            code: 'insufficient',
-            message: `Sirf ${eligible.length} free active accounts hain (chahiye ${q})`,
-            available: eligible.length,
-            needed: q,
-          },
-        });
-      }
-      plan = eligible.slice(0, q).map((account_id) => ({ account_id, qty: 1 }));
+    if (eligible.length < N) {
+      tgSend(
+        `Booking block: sirf ${eligible.length} free active accounts (chahiye ${N}) — Accounts page pe inactive/expired check karo (SMS forwarder panel check karo)`,
+        900,
+        'acct:insufficient'
+      );
+      return res.status(409).json({
+        error: {
+          code: 'insufficient',
+          message: `Sirf ${eligible.length} free active accounts hain (chahiye ${N})`,
+          available: eligible.length,
+          needed: N,
+        },
+      });
     }
-    const totalOrders = plan.reduce((s, p) => s + p.qty, 0);
+
+    // Fix-pairing gate — har eligible account ka EK fix invalid number chahiye
+    // (jo connect nahi hai unhe yahin se connect karo, phir bhi na mile to block).
+    ensurePairs();
+    const missing = missingPairs(eligible);
+    if (missing > 0) {
+      tgSend(
+        `${missing} accounts se invalid number connect nahi — Settings me Import Invalid Num karo`,
+        900,
+        'pair:missing'
+      );
+      return res.status(409).json({
+        error: {
+          code: 'no_invalid_number',
+          message: `${missing} accounts se invalid number connect nahi — Settings me Import Invalid Num karo`,
+          missing,
+        },
+      });
+    }
+
+    const plan = eligible.slice(0, N);
+    const totalOrders = N * A;
     const affiliate = product.affiliate_url || product.url;
 
     let bookingId = 0;
@@ -165,38 +237,43 @@ r.post(
       const b = db
         .prepare(
           `INSERT INTO bookings (product_id, platform, affiliate_url, section_id, address_id,
-                                 qty, qty_mode, per_acc_qty, status, total, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'quoting', ?, ?, ?)`
+                                 qty, qty_mode, per_acc_qty, n_accounts, qty_per_cart,
+                                 attempts_per_acc, max_price, status, total, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'total', 1, ?, ?, ?, ?, 'running', ?, ?, ?)`
         )
         .run(
           product.id,
           product.platform || 'flipkart',
           affiliate,
-          section.id,
+          section ? section.id : null,
           address.id,
-          q,
-          qty_mode,
-          per,
+          Q,
+          N,
+          Q,
+          A,
+          cap,
           totalOrders,
           t,
           t
         );
       bookingId = Number(b.lastInsertRowid);
       const ins = db.prepare(
-        `INSERT INTO orders (booking_id, account_id, product_id, address_id, qty,
+        `INSERT INTO orders (booking_id, account_id, product_id, address_id, qty, attempt_no,
                              captcha_state, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'auto', ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, 'auto', ?, ?)`
       );
-      for (const p of plan) {
-        for (let i = 0; i < p.qty; i++) {
-          const oi = ins.run(bookingId, p.account_id, product.id, address.id, 1, t, t);
+      for (const account_id of plan) {
+        for (let attempt = 1; attempt <= A; attempt++) {
+          const oi = ins.run(bookingId, account_id, product.id, address.id, Q, attempt, t, t);
           orderIds.push(Number(oi.lastInsertRowid));
         }
       }
     });
     run();
 
-    for (const id of orderIds) enqueue('price_check', id);
+    for (const id of orderIds) enqueue('order', id);
+    // Start tap → TG me EK live message (baaki steps isi ko edit karte rahenge)
+    tgProgress(bookingId, progressText(bookingId));
     res.status(201).json(await fetchDetail(bookingId));
   })
 );
@@ -296,7 +373,7 @@ r.post(
           `UPDATE orders SET error = NULL, updated_at = ? WHERE booking_id = ? AND price IS NULL AND captcha_state = 'auto'`
         ).run(t, id);
         db.prepare(
-          `UPDATE bookings SET status = 'quoting', updated_at = ? WHERE id = ? AND status IN ('quoted','failed')`
+          `UPDATE bookings SET status = 'quoting', error = NULL, updated_at = ? WHERE id = ? AND status IN ('quoted','failed')`
         ).run(t, id);
       });
       run();

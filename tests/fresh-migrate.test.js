@@ -46,6 +46,7 @@ ok(cols('orders').includes('booking_id'), 'orders.booking_id');
 ok(cols('orders').includes('address_id'), 'orders.address_id');
 ok(cols('orders').includes('price'), 'orders.price');
 ok(cols('orders').includes('captcha_state'), 'orders.captcha_state');
+ok(cols('orders').includes('step'), 'orders.step (live checkout step)');
 
 // 4. guarded ALTER idempotency — dobara migrate chalao (columns already there → skip, no throw)
 const r2 = migrate();

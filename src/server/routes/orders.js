@@ -27,10 +27,12 @@ function shape(row) {
     account_masked: maskIdentifier(row.account_identifier),
     product_title: row.product_title,
     qty: row.qty,
+    attempt_no: row.attempt_no ?? 1,
     price: row.price,
     captcha_state: row.captcha_state,
     captcha_png: row.captcha_png,
     order_ref: row.order_ref,
+    step: row.step || null,
     error: row.error,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -84,14 +86,14 @@ r.post(
     }
     setPendingCaptcha(id, text);
     db.prepare(
-      `UPDATE orders SET error = NULL, updated_at = ? WHERE id = ?`
+      `UPDATE orders SET error = NULL, step = NULL, updated_at = ? WHERE id = ?`
     ).run(now(), id);
     enqueue('order', id);
     res.json({ ok: true });
   })
 );
 
-// Retry failed order — price NULL ho to pehle price_check, warna order flow
+// Retry failed order — naya model: seedha order flow (price step khud set karta hai)
 r.post(
   '/:id/retry',
   h(async (req, res) => {
@@ -104,19 +106,8 @@ r.post(
     if (order.captcha_state === 'placed') {
       return res.status(409).json({ error: { code: 'invalid_state', message: 'Order already placed' } });
     }
-    if (order.price == null) {
-      // quote fail tha — price_check dobara chalao; booking failed hai to wapas quoting
-      db.prepare(`UPDATE orders SET error = NULL, updated_at = ? WHERE id = ?`).run(now(), id);
-      if (order.booking_id) {
-        db.prepare(
-          `UPDATE bookings SET status = 'quoting', updated_at = ? WHERE id = ? AND status = 'failed'`
-        ).run(now(), order.booking_id);
-      }
-      enqueue('price_check', id);
-      return res.json({ ok: true, step: 'price_check' });
-    }
     db.prepare(
-      `UPDATE orders SET error = NULL, captcha_state = 'auto', updated_at = ? WHERE id = ?`
+      `UPDATE orders SET error = NULL, captcha_state = 'auto', step = NULL, updated_at = ? WHERE id = ?`
     ).run(now(), id);
     enqueue('order', id);
     res.json({ ok: true, step: 'order' });

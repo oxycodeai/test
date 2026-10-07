@@ -7,6 +7,10 @@ import { ffFetch, getProxyUrl } from './net.js';
 
 const UA =
   'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36';
+// Mobile UA ko CSR shell milta hai (visible text ~1k, COD badge nahi) — fast path
+// ke liye desktop UA jisse static HTML me COD badge (Add to cart ke paas) aata hai.
+const DESKTOP_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 // Block wala honest error — proxy na set ho to fix ka hint bhi.
 const blockMsg = () =>
@@ -118,6 +122,15 @@ function extractFromHtml(html, url) {
     const r = html.match(re);
     return r ? r[1] || r[2] : null;
   };
+  // COD badge visible text me hota hai (Add to cart ke paas) — script/JSON
+  // (seller description "cash on delivery" marketing) hata do warna slice(0,300k)
+  // badge ko kaat deta ya marketing false-positive deta tha.
+  const codSource = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 300000);
   return normalize({
     title: og('og:title'),
     image: og('og:image'),
@@ -127,6 +140,7 @@ function extractFromHtml(html, url) {
     bigPrice: null,
     offers: [],
     bodyText: html.replace(/<[^>]+>/g, ' ').slice(0, 300000),
+    codSource,
     canonical: url,
   });
 }
@@ -252,7 +266,7 @@ export function normalize(raw) {
     special_price: price,
     discount_pct,
     in_stock: inStock ? 1 : 0,
-    cod_product: PRODUCT.codText.test(raw.bodyText || '') ? 1 : 0,
+    cod_product: PRODUCT.codText.test(raw.codSource ?? raw.bodyText ?? '') ? 1 : 0,
     offers: offerSet.slice(0, 6),
     source_url: raw.canonical,
   };
@@ -269,7 +283,7 @@ function looksBlocked(text) {
 // Throttle pe Flipkart homepage (ya error shell) serve karta hai — status 500/200
 // dono, URL bhi /p/ hi rehta hai. Title se pakadte hain.
 const HOMEPAGE_RE = /Online Shopping India Mobile, Cameras, Lifestyle/i;
-const isProductUrl = (u) => /\/p\//.test(String(u || ''));
+export const isProductUrl = (u) => /\/p\//.test(String(u || ''));
 
 // Junk = blocked/interstitial/homepage/empty/template-title — real product page nahi
 function isJunkPage(raw, finalUrl) {
@@ -286,7 +300,7 @@ export async function fetchProductPage(url) {
   // 1) fast raw fetch
   try {
     const res = await ffFetch(url, {
-      headers: { 'user-agent': UA, 'accept-language': 'en-IN,en;q=0.9' },
+      headers: { 'user-agent': DESKTOP_UA, 'accept-language': 'en-IN,en;q=0.9' },
       redirect: 'follow',
       signal: AbortSignal.timeout(12000),
     });
@@ -411,11 +425,28 @@ export async function resolveAffiliateUrl(u) {
     return { platform, affiliateUrl: null, url: u };
   }
 
+  // Affiliate hops DIRECT (bina proxy ke) — networks hamari IP block nahi karte,
+  // par free proxy IPs ko fktr/trackingv3 block karte hain. Flipkart ka data
+  // ffFetch/browser se (proxy ke through) alag se aata hai.
   let cur = u;
+  let extracted = null;
+  const flipkartIn = (text) => {
+    if (!text) return null;
+    // Cuelinks exit page: cashbackUrl = "https://www.flipkart.com/.../p/..."
+    const cb = String(text).match(/cashbackUrl\s*=\s*["']([^"']+)["']/);
+    if (cb) {
+      const v = cb[1].replace(/\\\//g, '/');
+      if (isFlipkartUrl(v) && isProductUrl(v)) return v;
+    }
+    // generic: HTML/JS me koi bhi flipkart /p/ URL
+    const m = String(text).match(/https:\/\/(?:www\.)?flipkart\.com\/[^\s"'<>\\]+\/p\/[^\s"'<>\\]+/);
+    if (m) return m[0].replace(/[),.;]+$/, '');
+    return null;
+  };
   for (let hop = 0; hop < 10; hop++) {
     let res;
     try {
-      res = await ffFetch(cur, {
+      res = await fetch(cur, {
         method: 'GET',
         redirect: 'manual',
         headers: { 'user-agent': UA, 'accept-language': 'en-IN,en;q=0.9' },
@@ -425,30 +456,60 @@ export async function resolveAffiliateUrl(u) {
       break;
     }
     const loc = res.headers.get('location');
+    const next = loc ? new URL(loc, cur).toString() : null;
+
+    // Location header ka koi bhi param (dl/url/…) seedha product link ho toh
+    const p =
+      (next && pickFlipkartProductParam(next)) ||
+      pickFlipkartProductParam(cur) ||
+      (isProductUrl(next) && isFlipkartUrl(next) ? next : null);
+    if (p) {
+      extracted = p;
+      break;
+    }
+
     if (res.status >= 300 && res.status < 400 && loc) {
-      cur = new URL(loc, cur).toString();
-      if (isProductUrl(cur)) break;
+      cur = next;
       continue;
     }
-    break; // 200 / no location — meta/JS redirect ho sakta hai
-  }
 
-  // JS/meta redirect → browser fallback (HAMESHA jab tak /p/ na mile —
-  // unknown redirectors (fktr.in → trackingv3.linkredirect.in) bhi JS se
-  // aage forward karte hain, HTTP Location ke bina)
-  if (!isProductUrl(cur)) {
+    // 200 page — JS/meta redirect content se nikaalo
+    if (res.ok) {
+      const html = await res.text().catch(() => '');
+      const hit = flipkartIn(html);
+      if (hit) {
+        extracted = hit;
+        break;
+      }
+      const meta = html.match(/http-equiv=["']?refresh["']?[^>]*url=([^"'>]+)/i);
+      if (meta) {
+        cur = new URL(meta[1].replace(/\\\//g, '/'), cur).toString();
+        continue;
+      }
+    }
+    break; // aur kuch nahi mila
+  }
+  let final = extracted || cur;
+
+  // Browser fallback (unknown networks jinhe HTTP se nahi nikaala) —
+  // HAMESHA jab tak /p/ na mile
+  if (!isProductUrl(final)) {
     try {
       const browser = await getBrowser();
       const ctx = await browser.newContext({ userAgent: UA, locale: 'en-IN' });
       const page = await ctx.newPage();
       await page.goto(u, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      // flipkart /p/ land hone tak wait (fixed sleep se reliable)
       await page
         .waitForURL((url) => isFlipkartUrl(url.href) && isProductUrl(url.href), {
           timeout: 15000,
         })
         .catch(() => {});
-      cur = page.url();
+      final = page.url();
+      if (!isProductUrl(final)) {
+        const html = await page.content().catch(() => '');
+        const hit = flipkartIn(html);
+        if (hit) final = hit;
+      }
       await ctx.close().catch(() => {});
     } catch {
       /* jo mila wo rakho */
@@ -456,13 +517,13 @@ export async function resolveAffiliateUrl(u) {
   }
 
   // last resort: param (dl/url/…) me seedha flipkart /p/ link
-  if (!isProductUrl(cur)) {
-    const p = pickFlipkartProductParam(cur) || pickFlipkartProductParam(u);
-    if (p) cur = p;
+  if (!isProductUrl(final)) {
+    const p = pickFlipkartProductParam(final) || pickFlipkartProductParam(u);
+    if (p) final = p;
   }
 
-  if (!isProductUrl(cur) || !isFlipkartUrl(cur)) {
-    const landed = String(cur).slice(0, 160);
+  if (!isProductUrl(final) || !isFlipkartUrl(final)) {
+    const landed = String(final).slice(0, 160);
     const e = new Error(
       'Ye link kisi Flipkart product page par land nahi hua — network ka login-wala affiliate link ya seedha flipkart product link paste karo (landed: ' +
         landed +
@@ -471,7 +532,7 @@ export async function resolveAffiliateUrl(u) {
     e.status = 422;
     throw e;
   }
-  return { platform, affiliateUrl: u, url: cur };
+  return { platform, affiliateUrl: u, url: final };
 }
 
 /**
@@ -508,3 +569,17 @@ export async function fetchProductWithSession(storageState, url) {
 }
 
 export const fetchTimeoutMs = config.nodeEnv === 'development' ? 45000 : 35000;
+
+/**
+ * Already-loaded page se structured price extraction (checkout pre-flight).
+ * Quote wala hi path — bodyText regex se galat ₹ pakadne ka risk nahi.
+ */
+export async function extractPriceOnPage(page) {
+  try {
+    const raw = (await page.evaluate(extractInPage)) || null;
+    const data = raw ? normalize(raw) : null;
+    return data?.price ?? null;
+  } catch {
+    return null;
+  }
+}

@@ -40,7 +40,7 @@ Ek self-hosted dashboard jahan ek shop owner apne 100-200 Flipkart accounts mana
 
 | ID  | Feature                            | Description                                                                        | Acceptance Criteria                              |
 | --- | ---------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------ |
-| F1  | Product fetch via affiliate link   | Link paste → product card (image, title, MRP, price, discount, offers, stock, COD) | Real API data; < 3s; affid attached              |
+| F1  | Product fetch via affiliate link   | Link paste → product card (image, title, MRP, price, discount, offers, stock, COD) | Real API data; < 3s; affid attached; **guarantee: order hamesha user ki link se hi chalega** (land na ho to honest fail) |
 | F2  | Multi-account OTP login            | Number/Email → OTP (user enters) → session saved                                   | Unlimited accounts; storageState saved; no limit |
 | F3  | Session health monitoring          | Background check every 10 min                                                      | Expired → red badge + toast                      |
 | F4  | Bulk account add                   | CSV/paste se ek saath 100+ add                                                     | All rows processed; status shown                 |
@@ -49,7 +49,7 @@ Ek self-hosted dashboard jahan ek shop owner apne 100-200 Flipkart accounts mana
 | F7  | Qty mode: total / per-acc          | Total 5 ya har acc se 5 — user choice                                              | Both modes allocate correctly                    |
 | F8  | COD auto-filter                    | Non-COD acc auto-exclude                                                           | Only COD accs in allocation                      |
 | F9  | Per-account price comparison table | Kaunsa acc kitne ka, kaunsa offer mila                                             | Sortable; best price highlighted                 |
-| F10 | Hybrid order placement             | Auto cart→address→COD; CAPTCHA manual                                              | Order placed or in pending queue                 |
+| F10 | Hybrid order placement             | Auto cart→address→COD; CAPTCHA manual; **live steps** (affiliate→product→price→buy→address→payment→captcha→place→done) | Order placed or in pending queue; har step SSE pe live |
 | F11 | ~~Commission dashboard~~ ❌ REMOVED 2026-10-03      | `/commission` + sync hata diya; earnings network site pe |
 
 ### P1 — Should Have (Phase 5)

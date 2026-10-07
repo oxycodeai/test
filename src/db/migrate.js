@@ -13,6 +13,13 @@ const ADD_COLUMNS = [
   ['products', 'affiliate_url', 'TEXT'],
   ['orders', 'booking_id', 'INTEGER REFERENCES bookings(id)'],
   ['orders', 'address_id', 'INTEGER REFERENCES addresses(id)'],
+  ['orders', 'step', 'TEXT'],
+  ['orders', 'attempt_no', 'INTEGER NOT NULL DEFAULT 1'],
+  ['bookings', 'n_accounts', 'INTEGER NOT NULL DEFAULT 1'],
+  ['bookings', 'qty_per_cart', 'INTEGER NOT NULL DEFAULT 1'],
+  ['bookings', 'attempts_per_acc', 'INTEGER NOT NULL DEFAULT 1'],
+  ['bookings', 'max_price', 'INTEGER'],
+  ['number_pool', 'account_id', 'INTEGER REFERENCES accounts(id) ON DELETE SET NULL'],
 ];
 
 function addColumns() {

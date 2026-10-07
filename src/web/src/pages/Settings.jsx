@@ -33,6 +33,7 @@ export default function Settings() {
 
       <SectionsCard toast={toast} />
       <AddressBook toast={toast} />
+      <InvalidNumCard toast={toast} />
       <ProxyCard toast={toast} />
 
       <div className="card">
@@ -351,7 +352,8 @@ function AddressBook({ toast }) {
       </div>
       <p className="hint" style={{ marginTop: 0 }}>
         Checkout par sirf yeh address accounts me add/select hota hai — saved purane addresses
-        kabhi choose nahi hote.
+        kabhi choose nahi hote. Phone number order pe account ka paired invalid number se aata
+        hai.
       </p>
       {!items ? (
         <Skeleton h={60} />
@@ -366,7 +368,6 @@ function AddressBook({ toast }) {
           <thead>
             <tr>
               <th>Name</th>
-              <th>Phone</th>
               <th>Address</th>
               <th>Default</th>
               <th style={{ width: 110 }}></th>
@@ -376,9 +377,6 @@ function AddressBook({ toast }) {
             {items.map((a) => (
               <tr key={a.id}>
                 <td data-label="Name">{a.name}</td>
-                <td data-label="Phone" className="num">
-                  {a.phone}
-                </td>
                 <td data-label="Address" className="small">
                   {a.line1}
                   {a.line2 ? `, ${a.line2}` : ''}, {a.city} {a.pincode}
@@ -417,8 +415,11 @@ function AddressBook({ toast }) {
         >
           <div className="row" style={{ gap: 10 }}>
             {field('name', 'Full name', { placeholder: 'Ramesh Kumar', autoFocus: true })}
-            {field('phone', 'Phone', { placeholder: '9812345678', inputMode: 'numeric' })}
           </div>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Phone number yahan nahi bharte — order pe account ka paired invalid number apne aap
+            lagta hai.
+          </p>
           {field('line1', 'Address (Area & Street)', { placeholder: '12, MG Road, Opposite Bank' })}
           {field('line2', 'Landmark (optional)', { placeholder: 'Near Bus Stand' })}
           <div className="row" style={{ gap: 10 }}>
@@ -435,6 +436,128 @@ function AddressBook({ toast }) {
             <span className="small">Default (naye accounts pe pehle yahi)</span>
           </label>
         </Modal>
+      )}
+    </div>
+  );
+}
+
+/** Import Invalid Num — payment ke liye phone numbers ka pool (per-order free claim). */
+function InvalidNumCard({ toast }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () =>
+    api('/numbers')
+      .then(setData)
+      .catch((e) => toast(e.message, 'error'));
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const onFile = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    setBusy(true);
+    try {
+      const text = await f.text();
+      const r = await api('/numbers/import', { method: 'POST', body: { text } });
+      toast(
+        `Import: ${r.imported} naye, ${r.paired || 0} connect hue, ${r.skipped_dupes} dup, ${r.invalid_lines} galat line`,
+        'success'
+      );
+      load();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const del = async (n) => {
+    if (!confirm(`Number ${n.number} delete?`)) return;
+    try {
+      await api(`/numbers/${n.id}`, { method: 'DELETE' });
+      toast('Number deleted', 'success');
+      load();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="row between">
+        <h2 className="card-title">Import Invalid Num</h2>
+        <label>
+          <input type="file" accept=".txt,.csv,text/plain" onChange={onFile} style={{ display: 'none' }} />
+          <Button size="sm" variant="primary" disabled={busy} onClick={(e) => e.currentTarget.previousElementSibling?.click()}>
+            {busy ? 'Importing…' : 'Import File (.txt)'}
+          </Button>
+        </label>
+      </div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Ek line pe ek 10-digit number. Har account (login number) ko yahan se EK FIX number
+        connect hota hai — us account ka order hamesha usi number ka address use karega.
+        Attempt chalu = number busy, attempt khatam = free.{' '}
+        <b>Start se pehle import karna zaroori</b> — numbers kam hue to unpaired accounts block
+        ho jayenge.
+      </p>
+      {!data ? (
+        <Skeleton h={60} />
+      ) : (
+        <>
+          <div className="row wrap" style={{ gap: 8, marginBottom: 10 }}>
+            <Pill status="ok">free {data.free}</Pill>
+            <Pill status={data.busy ? 'pending' : 'auto'}>busy {data.busy}</Pill>
+            <Pill status="auto">connected {data.paired}/{data.total}</Pill>
+          </div>
+          {data.items.length === 0 ? (
+            <EmptyState icon="📄" title="Koi number nahi" hint="Upar se .txt file import karo." />
+          ) : (
+            <table className="table responsive">
+              <thead>
+                <tr>
+                  <th>Invalid number</th>
+                  <th>Connect (login number)</th>
+                  <th>Status</th>
+                  <th style={{ width: 90 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((n) => (
+                  <tr key={n.id}>
+                    <td data-label="Invalid number" className="num">{n.number}</td>
+                    <td data-label="Connect">
+                      {n.account_id ? (
+                        <span className="num" title={n.account_label || ''}>
+                          {n.account_masked}
+                        </span>
+                      ) : (
+                        <Pill status="expired">connect nahi</Pill>
+                      )}
+                    </td>
+                    <td data-label="Status">
+                      {n.status === 'busy' ? (
+                        <Pill status="warn">busy · order {n.active_order_id}</Pill>
+                      ) : (
+                        <Pill status="ok">free</Pill>
+                      )}
+                    </td>
+                    <td data-label="">
+                      <div className="row" style={{ gap: 6 }}>
+                        <Button size="sm" variant="ghost" disabled={n.status === 'busy'} onClick={() => del(n)}>
+                          ✕
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
     </div>
   );

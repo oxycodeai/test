@@ -105,6 +105,10 @@ CREATE TABLE IF NOT EXISTS bookings (
   qty_mode      TEXT NOT NULL DEFAULT 'total'
                 CHECK (qty_mode IN ('total','per_account')),
   per_acc_qty   INTEGER DEFAULT 1,
+  n_accounts    INTEGER NOT NULL DEFAULT 1,
+  qty_per_cart  INTEGER NOT NULL DEFAULT 1,
+  attempts_per_acc INTEGER NOT NULL DEFAULT 1,
+  max_price     INTEGER,
   status        TEXT NOT NULL DEFAULT 'quoting'
                 CHECK (status IN ('quoting','quoted','running','done','failed','cancelled')),
   progress      INTEGER NOT NULL DEFAULT 0,
@@ -123,11 +127,13 @@ CREATE TABLE IF NOT EXISTS orders (
   product_id    INTEGER REFERENCES products(id),
   address_id    INTEGER REFERENCES addresses(id),
   qty           INTEGER NOT NULL DEFAULT 1,
+  attempt_no    INTEGER NOT NULL DEFAULT 1,
   price         INTEGER,
   captcha_state TEXT NOT NULL DEFAULT 'auto'
                 CHECK (captcha_state IN ('auto','pending','solved','placed','failed')),
   captcha_png   TEXT,
   order_ref     TEXT,
+  step          TEXT,
   error         TEXT,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
@@ -163,3 +169,21 @@ CREATE TABLE IF NOT EXISTS jobs (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, created_at);
+
+-- Invalid number pool — import kiye gaye numbers. Har account (login number)
+-- ko EK FIX invalid number se pair kiya jaata hai (account_id); order attempt
+-- usi account ke pair ko claim karta hai (free→busy), attempt khatam = free.
+CREATE TABLE IF NOT EXISTS number_pool (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  number           TEXT NOT NULL UNIQUE,
+  account_id       INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+  status           TEXT NOT NULL DEFAULT 'free'
+                   CHECK (status IN ('free','busy')),
+  active_order_id  INTEGER,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_number_pool_status ON number_pool(status);
+-- ek account sirf ek number; ek number sirf ek account (NULL multiples chalega)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_number_pool_account
+  ON number_pool(account_id) WHERE account_id IS NOT NULL;

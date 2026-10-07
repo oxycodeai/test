@@ -1,6 +1,8 @@
 // Proxied HTTP helper — Flipkart IP-block fix (settings.proxy_url / .env PROXY_URL).
 // Proxy set ho to saari plain fetches undici ProxyAgent se jayengi, warna direct.
-import { ProxyAgent } from 'undici';
+// NOTE: npm undici ka fetch use karna zaroori hai — Node ke global fetch me
+// npm wala dispatcher nahi chalta (UND_ERR_INVALID_ARG).
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import { getSetting } from '../../db/index.js';
 
 /** Active proxy URL — setting > .env > null (direct). */
@@ -34,5 +36,5 @@ export function resetProxyAgent() {
 export async function ffFetch(url, opts = {}) {
   const proxy = getProxyUrl();
   if (!proxy) return fetch(url, opts);
-  return fetch(url, { ...opts, dispatcher: agentFor(proxy) });
+  return undiciFetch(url, { ...opts, dispatcher: agentFor(proxy) });
 }

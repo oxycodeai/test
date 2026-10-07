@@ -166,6 +166,7 @@ CREATE TABLE orders (
   captcha_state TEXT NOT NULL DEFAULT 'auto'
                 CHECK (captcha_state IN ('auto','pending','solved','placed','failed')),
   captcha_png   TEXT,                       -- pending ke liye screenshot path
+  step          TEXT,                       -- live checkout step (shared/steps.js) — SSE `order_step`
   order_ref     TEXT,                       -- Flipkart order id (placed hone pe)
   error         TEXT,
   created_at    INTEGER NOT NULL,
@@ -268,7 +269,7 @@ Dev mode: step 1 response me debugOtp field (Flipkart page se intercept kiya hua
 
 | Method | Path      | Response                                                   |
 | ------ | --------- | ---------------------------------------------------------- |
-| GET    | `/stream` | SSE — toasts: session_expired, order_placed, job_done      |
+| GET    | `/stream` | SSE — toasts: session_expired, order_placed, job_done; `order_step {orderId, bookingId, step}`, `booking_status`, `captcha_pending` |
 | GET    | `/stats`  | `{active_accs, total_accs, pending_jobs, today_orders}`    |
 
 ## 6. Job Queue & Concurrency
@@ -310,20 +311,24 @@ async function extractProduct(page) {
 ## 8. Checkout Flow (Hybrid — F10)
 
 ```
-per allocated account:
-  1. load product (session) → Buy Now / Add to Cart
-  2. cart → checkout → address select (saved address default)
-  3. payment: COD select
-  4. CAPTCHA step:
-     a. screenshot nikalo → tesseract.js OCR → text
-     b. fill + verify → agar accept hua → Place Order (AUTO)
-     c. agar OCR galat/rejected (max 2 try) → captcha_png save
-        → order.captcha_state = 'pending' → SSE event → UI queue
-  5. user UI pe image dekh ke text type → POST /orders/:id/captcha → place
-  6. success → order_ref save, order_placed toast
+per allocated account (har step → orders.step + SSE `order_step`):
+  1. affiliate  — booking.affiliate_url (user ki apni link) se land;
+                  /p/ par na aaye to direct resolve, phir bhi na mile → honest 422
+                  (bina user ki link ke order kabhi nahi chalta — tracking guarantee)
+  2. product/price — live price pre-flight (quote se ±5%) + order amount cap
+  3. buy        — Buy Now (naya RN-web sticky CTA) → login wall check
+  4. address    — naya single-page checkout: "Deliver to:" inline check →
+                  Change picker (saved card) → warna Add New (map pin → away
+                  sheet → details form fill → save) — sirf hamara address
+  5. payment    — Continue → pay.flipkart.com; COD select (online kabhi nahi)
+  6. captcha    — captcha dikhe to screenshot + pending + SSE (manual queue);
+                  user UI pe text type → POST /orders/:id/captcha → replay
+  7. place      — Place Order; CHECKOUT_DRY_RUN=true ho to click NAHI,
+                  captcha_state='solved' + order_ref='DRY-RUN' + step='done'
+  8. success → order_ref save, accounts.booked_until, order_placed toast
 ```
 
-Safety: order amount cap (setting, default ₹50,000 COD limit se kam), 5-min dry-run freshness.
+Safety: order amount cap (setting, default ₹50,000 COD limit se kam), 5-min dry-run freshness, proxy optional (net.js ProxyAgent).
 
 ## 9. Session Health (F3)
 
